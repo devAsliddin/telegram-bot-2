@@ -1111,7 +1111,6 @@ async def send_user_messages(context: ContextTypes.DEFAULT_TYPE):
 async def connect_telegram_account(query, user_id):
     """Telegram hisobini ulash"""
     try:
-        # Agar API ma'lumotlari kiritilmagan bo'lsa
         if user_id not in telegram_accounts or not telegram_accounts[user_id].get(
             "api_id"
         ):
@@ -1128,7 +1127,17 @@ async def connect_telegram_account(query, user_id):
             )
             return
 
-        # Agar telefon raqami kiritilmagan bo'lsa
+        if not telegram_accounts[user_id].get("api_hash"):
+            user_data[user_id] = {"state": "waiting_api_hash"}
+            await query.edit_message_text(
+                "🔹 Iltimos, API_HASH ni kiriting:",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(
+                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
+                ),
+            )
+            return
+
         if not telegram_accounts[user_id].get("phone"):
             user_data[user_id] = {"state": "waiting_phone_number"}
             await query.edit_message_text(
@@ -1210,7 +1219,7 @@ async def process_phone_number(update, context, user_id, phone_number):
             name=f"sessions/user_{user_id}",  # Session fayllarini alohida papkaga saqlash
             api_id=API_ID,
             api_hash=API_HASH,
-            in_memory=False  # Sessionni faylga saqlash
+            in_memory=False,  # Sessionni faylga saqlash
         )
 
         await client.connect()
@@ -1218,12 +1227,12 @@ async def process_phone_number(update, context, user_id, phone_number):
         try:
             # Telefon raqamiga kod yuborish
             sent_code = await client.send_code(phone_number)
-            
+
             # Ma'lumotlarni saqlash
             telegram_accounts[user_id] = {
                 "phone": phone_number,
                 "phone_code_hash": sent_code.phone_code_hash,
-                "client": client  # Client obyektini saqlash
+                "client": client,  # Client obyektini saqlash
             }
             save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
 
@@ -1231,10 +1240,20 @@ async def process_phone_number(update, context, user_id, phone_number):
                 "✅ Tasdiqlash kodi yuborildi! Iltimos, Telegramdan kelgan 5 xonali kodni kiriting:\n\n"
                 "Kodni quyidagi formatda kiriting: <code>12345</code>",
                 parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔄 Kodni qayta yuborish", callback_data="resend_code")],
-                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
-                ])
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "🔄 Kodni qayta yuborish", callback_data="resend_code"
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "🔙 Orqaga", callback_data="back_to_start"
+                            )
+                        ],
+                    ]
+                ),
             )
 
         except FloodWait as e:
@@ -1248,9 +1267,7 @@ async def process_phone_number(update, context, user_id, phone_number):
             )
             await client.disconnect()
         except Exception as e:
-            await update.message.reply_text(
-                f"❌ Xatolik yuz berdi: {str(e)}"
-            )
+            await update.message.reply_text(f"❌ Xatolik yuz berdi: {str(e)}")
             await client.disconnect()
 
     except Exception as e:
@@ -1258,6 +1275,7 @@ async def process_phone_number(update, context, user_id, phone_number):
         await update.message.reply_text(
             "❌ Tizim xatosi. Iltimos, keyinroq qayta urinib ko'ring."
         )
+
 
 async def process_verification_code(update, context, user_id, code):
     """Tasdiqlash kodini qayta ishlash"""
@@ -1645,63 +1663,93 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if state == "waiting_api_id":
             try:
                 api_id = int(text)
-                telegram_accounts[user_id] = {"api_id": api_id}
-                user_data[user_id] = {"state": "waiting_api_hash"}
+                user_data[user_id] = {
+                    "temp_api_id": api_id,
+                    "state": "confirming_api_id",
+                }
+
                 await update.message.reply_text(
-                    "✅ API id qabul qilindi !\n\nEndi <b>API_HASH</b> ni kiriting:",
-                    parse_mode="HTML",
+                    f"API ID: {api_id}\n\nBu API ID to'g'rimi?",
+                    reply_markup=InlineKeyboardMarkup(
+                        [
+                            [
+                                InlineKeyboardButton(
+                                    "✅ Ha", callback_data="confirm_api_id"
+                                )
+                            ],
+                            [
+                                InlineKeyboardButton(
+                                    "❌ Yo'q", callback_data="reject_api_id"
+                                )
+                            ],
+                        ]
+                    ),
                 )
             except ValueError:
-                await update.message.reply_text("❌ API_ID must be numbers only!")
+                await update.message.reply_text(
+                    "❌ API_ID faqat raqamlardan iborat bo'lishi kerak!"
+                )
 
         elif state == "waiting_api_hash":
-            telegram_accounts[user_id]["api_hash"] = text
-            save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
-            user_data[user_id] = {"state": "waiting_phone_number"}
+            user_data[user_id]["temp_api_hash"] = text
+            user_data[user_id]["state"] = "confirming_api_hash"
+
             await update.message.reply_text(
-                "✅ API malumotlari saqlandi!\n\n"
-                "endi telefon raqamingizni kiriting:\n"
-                "Misol uchun: <code>+1234567890</code>",
-                parse_mode="HTML",
+                f"API_HASH: {text[:5]}...{text[-5:]}\n\nBu API HASH to'g'rimi?",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "✅ Ha", callback_data="confirm_api_hash"
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "❌ Yo'q", callback_data="reject_api_hash"
+                            )
+                        ],
+                    ]
+                ),
             )
 
         elif state == "waiting_phone_number":
             if not re.match(r"^\+[0-9]{10,14}$", text):
-                await update.message.reply_text("❌ Invalid phone number format!")
+                await update.message.reply_text(
+                    "❌ Noto'g'ri telefon raqami formati! Iltimos, +998901234567 formatida kiriting."
+                )
                 return
 
             telegram_accounts[user_id]["phone"] = text
             save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
 
             client = PyrogramClient(
-                name=f"user_{user_id}",
+                name=f"sessions/user_{user_id}",
                 api_id=telegram_accounts[user_id]["api_id"],
                 api_hash=telegram_accounts[user_id]["api_hash"],
-                in_memory=True,
+                in_memory=False,
             )
-            await client.connect()
 
+            await client.connect()
             sent_code = await client.send_code(text)
-            user_data[user_id] = {
-                "state": "waiting_verification_code",
-                "client": client,
-                "phone_code_hash": sent_code.phone_code_hash,
-            }
+
+            telegram_accounts[user_id]["phone_code_hash"] = sent_code.phone_code_hash
+            telegram_accounts[user_id]["client"] = client
+            save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
 
             await update.message.reply_text(
-                "✅ Verfikatsiya kodi yuborildi!\n\n"
-                "Telegramdan kelgan 5 xonali raqamni kirgizing. 12345 qilib emas 12_345 qilib kiriting\n\n"
-                "agar kod kelmagan bo'lsa qayta yuborish tugmasini bosing:",
+                "✅ Tasdiqlash kodi yuborildi! Iltimos, Telegramdan kelgan 5 xonali kodni kiriting:\n\n"
+                "Kodni quyidagi formatda kiriting: <code>12345</code>",
+                parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(
                     [
                         [
                             InlineKeyboardButton(
-                                "🔄 Qayta yuborish", callback_data="resend_code"
+                                "🔄 Kodni qayta yuborish", callback_data="resend_code"
                             )
                         ],
                         [
                             InlineKeyboardButton(
-                                "🔙 Qaytish", callback_data="back_to_start"
+                                "🔙 Orqaga", callback_data="back_to_start"
                             )
                         ],
                     ]
@@ -1797,11 +1845,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
 
     except Exception as e:
-        logger.error(f"Error: {str(e)}")
+        logger.error(f"Xabar qayta ishlashda xato: {str(e)}")
         await update.message.reply_text(
-            "❌ System error. Please try again.",
+            "❌ Tizim xatosi. Iltimos, keyinroq qayta urinib ko'ring.",
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_start")]]
+                [InlineKeyboardButton("🏠 Bosh menyu", callback_data="back_to_start")]
             ),
         )
 
@@ -1869,6 +1917,64 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup(keyboard),
             )
             return
+        if data == "confirm_api_id":
+            if user_id not in user_data or "temp_api_id" not in user_data[user_id]:
+                await query.edit_message_text(
+                    "❌ API ID topilmadi. Qayta urinib ko'ring."
+                )
+                return
+
+            api_id = user_data[user_id]["temp_api_id"]
+            telegram_accounts[user_id] = {"api_id": api_id}
+            user_data[user_id] = {"state": "waiting_api_hash"}
+
+            await query.edit_message_text(
+                "✅ API ID qabul qilindi!\n\nEndi API_HASH ni kiriting:",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
+                ),
+            )
+        elif data == "reject_api_id":
+            if user_id in user_data and "temp_api_id" in user_data[user_id]:
+                del user_data[user_id]["temp_api_id"]
+
+            user_data[user_id] = {"state": "waiting_api_id"}
+            await query.edit_message_text(
+                "🔄 Iltimos, API ID ni qayta kiriting:",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
+                ),
+            )
+        elif data == "confirm_api_hash":
+            if user_id not in user_data or "temp_api_hash" not in user_data[user_id]:
+                await query.edit_message_text(
+                    "❌ API HASH topilmadi. Qayta urinib ko'ring."
+                )
+                return
+
+            api_hash = user_data[user_id]["temp_api_hash"]
+            telegram_accounts[user_id]["api_hash"] = api_hash
+            save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
+            user_data[user_id] = {"state": "waiting_phone_number"}
+
+            await query.edit_message_text(
+                "✅ API ma'lumotlari saqlandi!\n\nEndi telefon raqamingizni kiriting:\nMasalan: +998901234567",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
+                ),
+            )
+
+        elif data == "reject_api_hash":
+            if user_id in user_data and "temp_api_hash" in user_data[user_id]:
+                del user_data[user_id]["temp_api_hash"]
+
+            user_data[user_id] = {"state": "waiting_api_hash"}
+            await query.edit_message_text(
+                "🔄 Iltimos, API HASH ni qayta kiriting:",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
+                ),
+            )
         elif data == "resend_code":
             await resend_code_handler(update, context)
             return
