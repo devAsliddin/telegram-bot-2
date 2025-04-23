@@ -1747,33 +1747,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 await update.message.reply_text(
                     f"API ID: {api_id}\n\nIs this API ID correct?",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "✅ Yes", callback_data="confirm_api_id"
-                                )
-                            ],
-                            [
-                                InlineKeyboardButton(
-                                    "❌ No", callback_data="reject_api_id"
-                                )
-                            ],
-                        ]
-                    ),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("✅ Yes", callback_data="confirm_api_id")],
+                        [InlineKeyboardButton("❌ No", callback_data="reject_api_id")]
+                    ])
                 )
             except ValueError:
                 await update.message.reply_text(
                     "❌ API ID must contain only numbers!",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🔙 Back", callback_data="back_to_start"
-                                )
-                            ]
-                        ]
-                    ),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]
+                    ])
                 )
 
         elif state == "waiting_api_hash":
@@ -1782,42 +1766,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await update.message.reply_text(
                 f"API HASH: {text[:5]}...{text[-5:]}\n\nIs this API HASH correct?",
-                reply_markup=InlineKeyboardMarkup(
-                    [
-                        [
-                            InlineKeyboardButton(
-                                "✅ Yes", callback_data="confirm_api_hash"
-                            )
-                        ],
-                        [
-                            InlineKeyboardButton(
-                                "❌ No", callback_data="reject_api_hash"
-                            )
-                        ],
-                    ]
-                ),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Yes", callback_data="confirm_api_hash")],
+                    [InlineKeyboardButton("❌ No", callback_data="reject_api_hash")]
+                ])
             )
 
         elif state == "waiting_phone_number":
-            phone_number = text.strip()
+            phone_number = text
             if not is_valid_phone_number(phone_number):
                 await update.message.reply_text(
                     "❌ Invalid phone number format!\n"
                     "Please use format: +998901234567\n\n"
                     "Note: Only Uzbekistan numbers (+998) are accepted",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🔙 Back", callback_data="back_to_start"
-                                )
-                            ]
-                        ]
-                    ),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]
+                    ])
                 )
                 return
 
-            # Save phone number
             telegram_accounts[user_id] = telegram_accounts.get(user_id, {})
             telegram_accounts[user_id]["phone"] = phone_number
             save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
@@ -1830,14 +1797,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     in_memory=False,
                 )
                 await client.connect()
-
-                # Send code
                 sent_code = await client.send_code(phone_number)
 
-                # Save data
-                telegram_accounts[user_id].update(
-                    {"phone_code_hash": sent_code.phone_code_hash, "client": client}
-                )
+                telegram_accounts[user_id].update({
+                    "phone_code_hash": sent_code.phone_code_hash,
+                    "client": client
+                })
                 save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
 
                 await update.message.reply_text(
@@ -1845,106 +1810,56 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "Please enter the 5-digit code you received:\n\n"
                     "⚠️ Format: <code>12345</code>",
                     parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🔄 Resend Code", callback_data="resend_code"
-                                )
-                            ],
-                            [
-                                InlineKeyboardButton(
-                                    "🔙 Back", callback_data="back_to_start"
-                                )
-                            ],
-                        ]
-                    ),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Resend Code", callback_data="resend_code")],
+                        [InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]
+                    ])
                 )
 
             except FloodWait as e:
                 await update.message.reply_text(
                     f"❌ Too many attempts! Please wait {e.value} seconds.",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🔙 Back", callback_data="back_to_start"
-                                )
-                            ]
-                        ]
-                    ),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]
+                    ])
                 )
             except PhoneNumberInvalid:
                 await update.message.reply_text(
                     "❌ Invalid phone number or number blocked!\n"
                     "Please try another number or contact support",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🔙 Back", callback_data="back_to_start"
-                                )
-                            ]
-                        ]
-                    ),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]
+                    ])
                 )
             except Exception as e:
                 logger.error(f"Phone number processing error: {str(e)}")
                 await update.message.reply_text(
                     "❌ Error occurred. Please try again later.",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🔙 Back", callback_data="back_to_start"
-                                )
-                            ]
-                        ]
-                    ),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]
+                    ])
                 )
 
         elif state == "waiting_verification_code":
-            # Clean the code (remove all non-digit characters)
             clean_code = re.sub(r"[^0-9]", "", text)
-
-            # Check code length
             if len(clean_code) != 5:
                 await update.message.reply_text(
-                    "❌ Code must be 5 digits! Please try again.",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🔄 Resend Code", callback_data="resend_code"
-                                )
-                            ],
-                            [
-                                InlineKeyboardButton(
-                                    "🔙 Back", callback_data="back_to_start"
-                                )
-                            ],
-                        ]
-                    ),
+                    "❌ Kod 5 raqamdan iborat bo'lishi kerak! Iltimos, qayta kiriting.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Kodni qayta yuborish", callback_data="resend_code")],
+                        [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
+                    ])
                 )
                 return
 
-            # Check if we have required data
-            if (
-                user_id not in telegram_accounts
-                or "phone_code_hash" not in telegram_accounts[user_id]
-                or "client" not in telegram_accounts[user_id]
-            ):
+            if (user_id not in telegram_accounts or
+                "phone_code_hash" not in telegram_accounts[user_id] or
+                "client" not in telegram_accounts[user_id]):
                 await update.message.reply_text(
-                    "❌ Session expired. Please start over.",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🔙 Back", callback_data="back_to_start"
-                                )
-                            ]
-                        ]
-                    ),
+                    "❌ Sessiya muddati tugagan! Iltimos, qaytadan boshlang.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
+                    ])
                 )
                 return
 
@@ -1953,105 +1868,68 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             phone_code_hash = telegram_accounts[user_id]["phone_code_hash"]
 
             try:
-                # Sign in with code
                 await client.sign_in(
                     phone_number=phone,
                     phone_code_hash=phone_code_hash,
                     phone_code=clean_code,
                 )
 
-                # Success - save session
                 session_string = await client.export_session_string()
                 telegram_accounts[user_id]["session"] = session_string
                 telegram_accounts[user_id]["connected_at"] = datetime.now()
                 save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
 
+                await client.disconnect()
+                del telegram_accounts[user_id]["client"]
+
                 await update.message.reply_text(
-                    "✅ Successfully connected! You can now use all bot features.",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🏠 Main Menu", callback_data="back_to_start"
-                                )
-                            ]
-                        ]
-                    ),
+                    "✅ Muvaffaqiyatli ulandi! Endi siz botning barcha funksiyalaridan foydalanishingiz mumkin.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🏠 Bosh menyu", callback_data="back_to_start")]
+                    ])
                 )
 
             except SessionPasswordNeeded:
                 telegram_accounts[user_id]["state"] = "waiting_password"
                 await update.message.reply_text(
-                    "🔒 Your account has 2FA enabled. Please enter your password:",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🔙 Back", callback_data="back_to_start"
-                                )
-                            ]
-                        ]
-                    ),
+                    "🔒 Hisobingizda 2-qadam autentifikatsiya yoqilgan. Iltimos, parolingizni kiriting:",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
+                    ])
                 )
 
             except PhoneCodeInvalid:
                 await update.message.reply_text(
-                    "❌ Invalid verification code! Please request a new code.",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🔄 Resend Code", callback_data="resend_code"
-                                )
-                            ],
-                            [
-                                InlineKeyboardButton(
-                                    "🔙 Back", callback_data="back_to_start"
-                                )
-                            ],
-                        ]
-                    ),
+                    "❌ Noto'g'ri tasdiqlash kodi! Iltimos, yangi kod so'rang va qayta urinib ko'ring.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Kodni qayta yuborish", callback_data="resend_code")],
+                        [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
+                    ])
                 )
 
             except Exception as e:
+                logger.error(f"Tasdiqlash kodini qayta ishlashda xato: {str(e)}")
                 await update.message.reply_text(
-                    f"❌ Error: {str(e)}",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🔙 Back", callback_data="back_to_start"
-                                )
-                            ]
-                        ]
-                    ),
+                    f"❌ Xatolik yuz berdi: {str(e)}",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
+                    ])
                 )
 
         elif state == "waiting_password":
-            if (
-                user_id not in telegram_accounts
-                or "client" not in telegram_accounts[user_id]
-            ):
+            if user_id not in telegram_accounts or "client" not in telegram_accounts[user_id]:
                 await update.message.reply_text(
                     "❌ Session expired. Please start over.",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🔙 Back", callback_data="back_to_start"
-                                )
-                            ]
-                        ]
-                    ),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]
+                    ])
                 )
                 return
 
             client = telegram_accounts[user_id]["client"]
-
             try:
                 await client.check_password(password=text)
 
-                # Success - save session
                 session_string = await client.export_session_string()
                 telegram_accounts[user_id]["session"] = session_string
                 telegram_accounts[user_id]["connected_at"] = datetime.now()
@@ -2059,29 +1937,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 await update.message.reply_text(
                     "✅ Successfully connected! You can now use all bot features.",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🏠 Main Menu", callback_data="back_to_start"
-                                )
-                            ]
-                        ]
-                    ),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_start")]
+                    ])
                 )
 
             except Exception as e:
                 await update.message.reply_text(
                     f"❌ Error: {str(e)}",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🔙 Back", callback_data="back_to_start"
-                                )
-                            ]
-                        ]
-                    ),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]
+                    ])
                 )
 
         elif state == "waiting_group_link":
@@ -2105,24 +1971,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except ValueError:
                 await update.message.reply_text(
                     "❌ Invalid interval! Please enter a number (e.g. 15)",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🔙 Back", callback_data="set_interval"
-                                )
-                            ]
-                        ]
-                    ),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 Back", callback_data="set_interval")]
+                    ])
                 )
 
     except Exception as e:
         logger.error(f"Message processing error: {str(e)}", exc_info=True)
         await update.message.reply_text(
             "❌ System error occurred. Please try again later.",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_start")]]
-            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_start")]
+            ])
         )
 
 
