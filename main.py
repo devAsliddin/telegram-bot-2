@@ -1273,6 +1273,7 @@ def is_valid_code_format(code: str) -> bool:
 #             ),
 #         )
 
+
 async def process_phone_number(update, context, user_id, phone_number):
     """Telefon raqamini qayta ishlash va tasdiqlash kodini yuborish"""
     try:
@@ -1352,6 +1353,7 @@ async def process_phone_number(update, context, user_id, phone_number):
                 [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
             ),
         )
+
 
 async def process_verification_code(update, context, user_id, code):
     """Tasdiqlash kodini qayta ishlash"""
@@ -1460,6 +1462,7 @@ async def process_verification_code(update, context, user_id, code):
                 [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
             ),
         )
+
 
 def format_code(raw_code: str) -> str:
     """Foydalanuvchi kiritgan kodni standart formatga keltiradi"""
