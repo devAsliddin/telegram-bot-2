@@ -5,9 +5,9 @@ import random
 import string
 import asyncio
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
-    Application,
+    Application,  # <-- Bu qatorni qo'shing
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -15,20 +15,20 @@ from telegram.ext import (
     filters,
 )
 from dotenv import load_dotenv
-from telethon import TelegramClient, functions, types
-from telethon.errors import (
-    SessionPasswordNeededError,
-    PhoneNumberInvalidError,
-    PhoneCodeInvalidError,
-    FloodWaitError,
+from pyrogram import Client as PyrogramClient
+from pyrogram.errors import (
+    BadRequest,
+    FloodWait,
+    SessionPasswordNeeded,
+    PhoneCodeInvalid,
+    PhoneNumberInvalid,
 )
-from telethon.sessions import StringSession
 import pytz
 import json
 from pathlib import Path
 from telegram.constants import ParseMode
 
-# Setup logging
+# Loglarni sozlash
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -36,12 +36,11 @@ logging.basicConfig(
     filemode="w",
 )
 logger = logging.getLogger(__name__)
-
-# Data storage setup
+# Ma'lumotlarni saqlash uchun sozlash
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 
-# Load environment variables
+# Muhit o'zgaruvchilarini yuklash
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME")
@@ -49,7 +48,7 @@ ADMIN_ID = int(os.getenv("ADMIN_ID")) if os.getenv("ADMIN_ID") else None
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 
-# Validate required environment variables
+# Majburiy muhit o'zgaruvchilarini tekshirish
 if not all([TOKEN, API_ID, API_HASH]):
     missing = []
     if not TOKEN:
@@ -58,12 +57,12 @@ if not all([TOKEN, API_ID, API_HASH]):
         missing.append("API_ID")
     if not API_HASH:
         missing.append("API_HASH")
-    logger.error(f"Missing required environment variables: {', '.join(missing)}")
-    print(f"ERROR: Missing required environment variables: {', '.join(missing)}")
-    print("Please check your .env file and restart the bot")
+    logger.error(f"Majburiy muhit o'zgaruvchilari yetishmayapti: {', '.join(missing)}")
+    print(f"XATO: Majburiy muhit o'zgaruvchilari yetishmayapti: {', '.join(missing)}")
+    print("Iltimos, .env faylini tekshiring va botni qayta ishga tushiring")
     exit(1)
 
-# Data files
+# Ma'lumotlar fayllari
 USER_DATA_FILE = DATA_DIR / "user_data.json"
 PREMIUM_USERS_FILE = DATA_DIR / "premium_users.json"
 GENERATED_KEYS_FILE = DATA_DIR / "generated_keys.json"
@@ -72,10 +71,10 @@ TELEGRAM_ACCOUNTS_FILE = DATA_DIR / "telegram_accounts.json"
 USER_GROUPS_FILE = DATA_DIR / "user_groups.json"
 AUTO_FOLDERS_FILE = DATA_DIR / "auto_folders.json"
 
-# Data structures
+# Ma'lumotlar tuzilmalari
 user_groups = {}  # {user_id: {chat_id: {"title": str, "link": str}}}
-user_data = {}  # User states and temporary data
-message_jobs = {}  # Active message jobs
+user_data = {}  # Foydalanuvchi holatlari va vaqtinchalik ma'lumotlar
+message_jobs = {}  # Faol xabar ishlari
 premium_users = (
     {}
 )  # {user_id: {"expiry": datetime, "key": str, "admin_id": int, "days": int}}
@@ -85,14 +84,14 @@ generated_keys = (
 )  # {key: {"user_id": int, "expiry": datetime, "admin_id": int, "days": int}}
 telegram_accounts = (
     {}
-)  # {user_id: {"phone": str, "client": TelegramClient, "session": str}}
+)  # {user_id: {"phone": str, "client": PyrogramClient, "session": str}}
 auto_folders = (
     {}
 )  # {user_id: {"folder_id": int, "title": str, "groups": [chat_id1, chat_id2,...]}}
 
 
 def load_data(file_path, default_value):
-    """Load data from JSON file with datetime handling"""
+    """JSON faylidan ma'lumotlarni yuklash va datetime bilan ishlash"""
     try:
         if file_path.exists():
             with open(file_path, "r", encoding="utf-8") as f:
@@ -104,26 +103,43 @@ def load_data(file_path, default_value):
                 return data
         return default_value
     except Exception as e:
-        logger.error(f"Error loading {file_path}: {str(e)}")
+        logger.error(f"{file_path} yuklashda xato: {str(e)}")
+        return default_value
+
+
+def load_data(file_path, default_value):
+    """JSON faylidan ma'lumotlarni yuklash va datetime bilan ishlash"""
+    try:
+        if file_path.exists():
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if file_path in [PREMIUM_USERS_FILE, GENERATED_KEYS_FILE]:
+                    for key, value in data.items():
+                        if "expiry" in value and isinstance(value["expiry"], str):
+                            value["expiry"] = datetime.fromisoformat(value["expiry"])
+                return data
+        return default_value
+    except Exception as e:
+        logger.error(f"{file_path} yuklashda xato: {str(e)}")
         return default_value
 
 
 def save_data(file_path, data):
-    """Save data to JSON file with datetime handling"""
+    """JSON fayliga ma'lumotlarni saqlash va datetime bilan ishlash"""
     try:
 
         def json_serializer(obj):
             if isinstance(obj, datetime):
                 return obj.isoformat()
-            raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+            raise TypeError(f"{type(obj)} turidagi obyekt JSON uchun mos emas")
 
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2, default=json_serializer)
     except Exception as e:
-        logger.error(f"Error saving {file_path}: {str(e)}")
+        logger.error(f"{file_path} saqlashda xato: {str(e)}")
 
 
-# Load all data at startup
+# Ishga tushganda barcha ma'lumotlarni yuklash
 user_data = load_data(USER_DATA_FILE, {})
 premium_users = load_data(PREMIUM_USERS_FILE, {})
 generated_keys = load_data(GENERATED_KEYS_FILE, {})
@@ -133,14 +149,8 @@ user_groups = load_data(USER_GROUPS_FILE, {})
 auto_folders = load_data(AUTO_FOLDERS_FILE, {})
 
 
-def generate_key(length=12):
-    """Generate random premium key"""
-    chars = string.ascii_uppercase + string.digits
-    return "PREMIUM-" + "".join(random.choice(chars) for _ in range(length))
-
-
 async def is_premium(user_id: int) -> bool:
-    """Check if user has active premium subscription"""
+    """Foydalanuvchining faol premium obunasi borligini tekshirish"""
     if user_id in premium_users:
         expiry = premium_users[user_id]["expiry"]
         if isinstance(expiry, str):
@@ -150,8 +160,33 @@ async def is_premium(user_id: int) -> bool:
 
 
 async def is_admin(user_id: int) -> bool:
-    """Check if user is admin"""
+    """Foydalanuvchi admin ekanligini tekshirish"""
     return user_id == ADMIN_ID
+
+
+def generate_key(length=12):
+    """Tasodifiy premium kalit yaratish"""
+    chars = string.ascii_uppercase + string.digits
+    return "PREMIUM-" + "".join(random.choice(chars) for _ in range(length))
+
+
+async def check_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if await is_premium(user_id):
+        expiry = premium_users[user_id]["expiry"].strftime("%Y-%m-%d")
+        await update.message.reply_text(f"✅ Premium faol (tugash sanasi: {expiry})")
+    else:
+        await update.message.reply_text("❌ Faol premium obuna yo'q")
+
+
+async def is_premium(user_id: int) -> bool:
+    """Foydalanuvchining faol premium obunasi borligini tekshirish"""
+    if user_id in premium_users:
+        expiry = premium_users[user_id]["expiry"]
+        if isinstance(expiry, str):
+            expiry = datetime.fromisoformat(expiry)
+        return expiry > datetime.now()
+    return False
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -173,51 +208,40 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ],
         ]
         await message.reply_text(
-            f"Salom @{username}!\n\n❌ Sizda premium obuna mavjud emas",
+            f"Salom @{username}!\n\n❌ Sizda premium obuna yo'q",
             reply_markup=InlineKeyboardMarkup(buttons),
         )
         return
 
-    # Agar API ma'lumotlari kiritilmagan bo'lsa
-    if user_id not in telegram_accounts or not telegram_accounts[user_id].get("api_id"):
-        user_data[user_id] = {"state": "waiting_api_id"}
-        await message.reply_text(
-            "📋 Iltimos, Telegram API ID ni yuboring:\n\n"
-            "API ID ni olish uchun my.telegram.org saytiga kiring",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
-            ),
-        )
-        return
-
+    # Premium foydalanuvchilar uchun asosiy menyu
     keyboard = [
         [InlineKeyboardButton("➕ Guruh qo'shish", callback_data="add_group")],
-        [InlineKeyboardButton("� Guruhlarim", callback_data="list_groups")],
+        [InlineKeyboardButton("📋 Mening guruhlarim", callback_data="list_groups")],
         [
             InlineKeyboardButton(
-                "📲 Telegram hisobni ulash", callback_data="connect_account"
+                "📲 Telegram hisobini ulash", callback_data="connect_account"
             )
         ],
         [
             InlineKeyboardButton(
-                "📂 Avto-folder yaratish", callback_data="create_auto_folder"
+                "📂 Avto-papka yaratish", callback_data="create_auto_folder"
             )
         ],
         [InlineKeyboardButton("✉️ Xabar yuborish", callback_data="send_message")],
-        [InlineKeyboardButton("⚙️ Interval sozlash", callback_data="set_interval")],
+        [InlineKeyboardButton("⚙️ Intervalni sozlash", callback_data="set_interval")],
         [InlineKeyboardButton("⭐ Premium ma'lumot", callback_data="premium_info")],
     ]
     expiry_date = premium_users[user_id]["expiry"].strftime("%Y-%m-%d")
     await message.reply_text(
-        f"⭐ Premium obuna aktiv @{username}\n📅 Tugash sanasi: {expiry_date}",
+        f"⭐ Premium faol @{username}\n📅 Tugash sanasi: {expiry_date}",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show admin panel"""
+    """Admin panelini ko'rsatish"""
     if not await is_admin(update.effective_user.id):
-        await update.message.reply_text("❌ Faqat admin uchun!")
+        await update.message.reply_text("❌ Faqat adminlar uchun!")
         return
 
     keyboard = [
@@ -231,22 +255,25 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "📊 Premium foydalanuvchilar", callback_data="premium_users_list"
             )
         ],
-        [InlineKeyboardButton("📨 Aktiv so'rovlar", callback_data="pending_requests")],
+        [
+            InlineKeyboardButton(
+                "📨 Kutilayotgan so'rovlar", callback_data="pending_requests"
+            )
+        ],
     ]
-
     await update.message.reply_text(
-        "🛠 Admin paneli:\n\nQuyidagi tugmalardan birini tanlang:",
+        "🛠 Admin paneli:\n\nIltimos, variantni tanlang:",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
 async def show_premium_users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show list of premium users"""
+    """Premium foydalanuvchilar ro'yxatini ko'rsatish"""
     query = update.callback_query
     await query.answer()
 
     if not await is_admin(query.from_user.id):
-        await query.edit_message_text("❌ Faqat admin uchun!")
+        await query.edit_message_text("❌ Faqat adminlar uchun!")
         return
 
     if not premium_users:
@@ -265,7 +292,7 @@ async def show_premium_users_list(update: Update, context: ContextTypes.DEFAULT_
         )
         expiry = data["expiry"].strftime("%Y-%m-%d")
         message += f"👤 {username} (ID: {user_id})\n"
-        message += f"📅 Tugashi: {expiry}\n"
+        message += f"📅 Tugash sanasi: {expiry}\n"
         message += f"⏳ Davomiylik: {data['days']} kun\n\n"
 
     await query.edit_message_text(
@@ -277,21 +304,21 @@ async def show_premium_users_list(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def show_pending_requests(query, context):
-    """Show pending premium requests"""
+    """Kutilayotgan premium so'rovlarini ko'rsatish"""
     if not await is_admin(query.from_user.id):
-        await query.edit_message_text("❌ Faqat admin uchun!")
+        await query.edit_message_text("❌ Faqat adminlar uchun!")
         return
 
     if not pending_requests:
         await query.edit_message_text(
-            "ℹ️ Hozircha yangi so'rovlar mavjud emas.",
+            "ℹ️ Kutilayotgan so'rovlar yo'q.",
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("🏠 Admin paneli", callback_data="admin_panel")]]
             ),
         )
         return
 
-    message = "📨 Kutilayotgan premium so'rovlari:\n\n"
+    message = "📨 Kutilayotgan premium so'rovlar:\n\n"
     buttons = []
 
     for user_id, request in pending_requests.items():
@@ -299,7 +326,7 @@ async def show_pending_requests(query, context):
         buttons.append(
             [
                 InlineKeyboardButton(
-                    f"✅ {request['username']} ni tasdiqlash",
+                    f"✅ request['username'] ni tasdiqlash",
                     callback_data=f"approve_{user_id}",
                 )
             ]
@@ -312,9 +339,9 @@ async def show_pending_requests(query, context):
 
 
 async def approve_user_request(query, context, user_id_to_approve):
-    """Approve user's premium request"""
+    """Foydalanuvchi so'rovini tasdiqlash"""
     if not await is_admin(query.from_user.id):
-        await query.edit_message_text("❌ Faqat admin uchun!")
+        await query.edit_message_text("❌ Faqat adminlar uchun!")
         return
 
     try:
@@ -340,7 +367,6 @@ async def approve_user_request(query, context, user_id_to_approve):
         }
 
         user_info = pending_requests.pop(user_id_to_approve)
-
         save_data(PREMIUM_USERS_FILE, premium_users)
         save_data(GENERATED_KEYS_FILE, generated_keys)
         save_data(PENDING_REQUESTS_FILE, pending_requests)
@@ -350,20 +376,19 @@ async def approve_user_request(query, context, user_id_to_approve):
             text=f"🎉 Sizning premium so'rovingiz tasdiqlandi!\n\n"
             f"🔑 Sizning premium kalitingiz: <code>{key}</code>\n"
             f"📅 Tugash sanasi: {expiry_date.strftime('%Y-%m-%d')}\n\n"
-            f"Endi siz barcha bot funksiyalaridan foydalanishingiz mumkin!",
+            f"Endi siz botning barcha funksiyalaridan foydalanishingiz mumkin!",
             parse_mode="HTML",
         )
 
         await query.edit_message_text(
-            f"✅ @{user_info['username']} foydalanuvchiga premium berildi!\n"
-            f"Kalit: {key}",
+            f"✅ @{user_info['username']} premiumga ega bo'ldi!\n" f"Kalit: {key}",
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("🏠 Admin paneli", callback_data="admin_panel")]]
             ),
         )
 
     except Exception as e:
-        logger.error(f"Approval error: {str(e)}")
+        logger.error(f"Tasdiqlash xatosi: {str(e)}")
         await query.edit_message_text(
             f"❌ Xato: {str(e)}",
             reply_markup=InlineKeyboardMarkup(
@@ -373,9 +398,9 @@ async def approve_user_request(query, context, user_id_to_approve):
 
 
 async def show_key_generation_options(query):
-    """Show key generation options for admin"""
+    """Admin uchun kalit yaratish variantlarini ko'rsatish"""
     if not await is_admin(query.from_user.id):
-        await query.edit_message_text("❌ Faqat admin uchun!")
+        await query.edit_message_text("❌ Faqat adminlar uchun!")
         return
 
     keyboard = [
@@ -387,52 +412,33 @@ async def show_key_generation_options(query):
     ]
 
     await query.edit_message_text(
-        "🔑 Premium kalit yaratish:\n\nKalit amal qilish muddatini tanlang:",
+        "🔑 Premium kalit yaratish:\n\nKalit davomiyligini tanlang:",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
-async def generate_premium_key(query, context):
-    """Generate premium key with selected duration"""
-    if query.from_user.id != ADMIN_ID:
-        await query.answer("❌ Faqat admin uchun!", show_alert=True)
-        return
-
+async def generate_premium_key(query, context, days=30):
+    """Tanlangan muddat uchun premium kalit yaratish"""
     try:
-        days = int(query.data.split("_")[1])
         key = generate_key()
         expiry_date = datetime.now() + timedelta(days=days)
 
         generated_keys[key] = {
-            "user_id": None,
+            "user_id": None,  # Faollashtirilganda o'rnatiladi
             "expiry": expiry_date,
             "admin_id": ADMIN_ID,
             "days": days,
         }
         save_data(GENERATED_KEYS_FILE, generated_keys)
 
-        await query.edit_message_text(
-            f"✅ Yangi premium kalit yaratildi:\n\n"
-            f"🔑 Kalit: <code>{key}</code>\n"
-            f"📅 Tugash sanasi: {expiry_date.strftime('%Y-%m-%d')}\n"
-            f"⏳ Davomiylik: {days} kun\n\n"
-            "Foydalanuvchiga shu kalitni yuboring.",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🏠 Admin paneli", callback_data="admin_panel")]]
-            ),
-        )
+        return key, expiry_date
     except Exception as e:
-        logger.error(f"Key generation error: {str(e)}")
-        await query.edit_message_text(
-            f"❌ Xato: {str(e)}\n\nIltimos, qayta urinib ko'ring.",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 Orqaga", callback_data="admin_panel")]]
-            ),
-        )
+        logger.error(f"Kalit yaratish xatosi: {str(e)}")
+        raise
 
 
 async def activate_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Kalitni faollashtirish"""
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -440,102 +446,121 @@ async def activate_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await is_premium(user_id):
         expiry_date = premium_users[user_id]["expiry"].strftime("%Y-%m-%d")
         await query.edit_message_text(
-            f"ℹ️ Sizda allaqachon premium obuna mavjud!\n"
-            f"Tugash sanasi: {expiry_date}",
+            f"ℹ️ Sizda allaqachon premium obuna mavjud (tugash sanasi: {expiry_date})",
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🏠 Bosh menyu", callback_data="start")]]
+                [[InlineKeyboardButton("🏠 Menyu", callback_data="start")]]
             ),
         )
         return
 
     await query.edit_message_text(
-        "🔑 Premium kalitni kiriting:\n\n"
-        "Namuna: PREMIUM-ABC123DEF456\n\n"
-        "Agar kalitingiz bo'lmasa, admin bilan bog'laning: "
-        f"@{ADMIN_USERNAME}",
+        "🔑 Premium kalitingizni kiriting (format: PREMIUM-XXXXXX):",
         reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🔙 Orqaga", callback_data="start")]]
+            [[InlineKeyboardButton("🔙 Bekor qilish", callback_data="start")]]
         ),
     )
     user_data[user_id] = {"state": "waiting_key_activation"}
 
 
 async def process_key_activation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Kiritilgan premium kalitni qayta ishlash"""
     user_id = update.effective_user.id
     text = update.message.text.strip().upper()
 
+    # Kalit formatini tekshirish
     if not re.match(r"^PREMIUM-[A-Z0-9]{8,12}$", text):
         await update.message.reply_text(
-            "❌ Noto'g'ri kalit formati!\n"
-            "To'g'ri format: PREMIUM-ABC123DEF456\n\n"
-            "Qayta urinib ko'ring yoki admin bilan bog'laning: "
-            f"@{ADMIN_USERNAME}",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 Orqaga", callback_data="start")]]
-            ),
-        )
-        return
-
-    if text in generated_keys:
-        key_data = generated_keys[text]
-
-        if key_data["user_id"] is not None and key_data["user_id"] != user_id:
-            await update.message.reply_text(
-                "❌ Bu kalit allaqachon boshqa foydalanuvchi tomonidan ishlatilgan!",
-                reply_markup=InlineKeyboardMarkup(
-                    [
-                        [
-                            InlineKeyboardButton(
-                                "Admin bilan bog'lanish", url=f"t.me/{ADMIN_USERNAME}"
-                            )
-                        ]
-                    ]
-                ),
-            )
-            return
-
-        premium_users[user_id] = {
-            "expiry": key_data["expiry"],
-            "key": text,
-            "admin_id": key_data["admin_id"],
-            "days": key_data["days"],
-        }
-        generated_keys[text]["user_id"] = user_id
-
-        save_data(PREMIUM_USERS_FILE, premium_users)
-        save_data(GENERATED_KEYS_FILE, generated_keys)
-
-        expiry_date = key_data["expiry"].strftime("%Y-%m-%d")
-        await update.message.reply_text(
-            f"🎉 Tabriklaymiz! Premium obuna faollashtirildi!\n\n"
-            f"🔑 Kalit: <code>{text}</code>\n"
-            f"📅 Tugash sanasi: {expiry_date}\n"
-            f"⏳ Davomiylik: {key_data['days']} kun\n\n"
-            "Endi botning barcha funksiyalaridan foydalanishingiz mumkin!",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🏠 Bosh menyu", callback_data="start")]]
-            ),
-        )
-    else:
-        await update.message.reply_text(
-            "❌ Noto'g'ri premium kalit yoki kalit mavjud emas!\n\n"
-            f"Yangi kalit olish uchun @{ADMIN_USERNAME} ga murojaat qiling.",
+            "❌ Noto'g'ri kalit formati! To'g'ri format: PREMIUM-ABC123",
             reply_markup=InlineKeyboardMarkup(
                 [
                     [
                         InlineKeyboardButton(
-                            "Premium so'rov", callback_data="request_premium"
+                            "🔄 Qayta urinish", callback_data="activate_key"
+                        )
+                    ]
+                ]
+            ),
+        )
+        return
+
+    # Kalit mavjudligini tekshirish
+    if text not in generated_keys:
+        await update.message.reply_text(
+            "❌ Noto'g'ri kalit yoki kalit mavjud emas!",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "🔄 Qayta urinish", callback_data="activate_key"
                         )
                     ],
                     [
                         InlineKeyboardButton(
-                            "Qayta urinish", callback_data="activate_key"
+                            "🆙 Premium so'rov", callback_data="request_premium"
                         )
                     ],
                 ]
             ),
         )
+        return
+
+    key_data = generated_keys[text]
+
+    # Kalit allaqachon ishlatilganligini tekshirish
+    if key_data["user_id"] is not None:
+        await update.message.reply_text(
+            "❌ Bu kalit allaqachon ishlatilgan!",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "Admin bilan bog'lanish", url=f"t.me/{ADMIN_USERNAME}"
+                        )
+                    ]
+                ]
+            ),
+        )
+        return
+
+    # Premiumni faollashtirish
+    premium_users[user_id] = {
+        "expiry": key_data["expiry"],
+        "key": text,
+        "admin_id": key_data["admin_id"],
+        "days": key_data["days"],
+    }
+    generated_keys[text]["user_id"] = user_id
+
+    save_data(PREMIUM_USERS_FILE, premium_users)
+    save_data(GENERATED_KEYS_FILE, generated_keys)
+
+    expiry_date = key_data["expiry"].strftime("%Y-%m-%d")
+    await update.message.reply_text(
+        f"""🎉 Premium faollashtirildi!
+⏳ Davomiylik: {key_data['days']} kun
+📅 Tugash sanasi: {expiry_date}
+
+Endi siz barcha funksiyalardan foydalanishingiz mumkin!""",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🏠 Menyu", callback_data="start")]]
+        ),
+    )
+
+    # Faollashtirish holatini tozalash
+    if user_id in user_data and "state" in user_data[user_id]:
+        del user_data[user_id]["state"]
+
+
+async def generate_test_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update.effective_user.id):
+        await update.message.reply_text("Faqat adminlar uchun!")
+        return
+
+    key, expiry = await generate_premium_key(None, None, days=30)
+    await update.message.reply_text(
+        f"Test Premium kaliti:\n<code>{key}</code>\nTugash sanasi: {expiry.strftime('%Y-%m-%d')}",
+        parse_mode="HTML",
+    )
 
 
 async def request_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -567,15 +592,15 @@ async def request_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=ADMIN_ID,
             text=f"⚠️ Yangi premium so'rovi:\n\n"
-            f"User: @{query.from_user.username}\n"
+            f"Foydalanuvchi: @{query.from_user.username}\n"
             f"ID: {user_id}\n\n"
             f"Tasdiqlash: /approve_{user_id}",
         )
 
     await query.edit_message_text(
-        "✅ Premium so'rovingiz qabul qilindi!\n\n"
+        "✅ Sizning premium so'rovingiz qabul qilindi!\n\n"
         f"Admin: @{ADMIN_USERNAME}\n"
-        "Tasdiqlashni kuting...",
+        "Tasdiqlanishini kuting...",
         reply_markup=InlineKeyboardMarkup(
             [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
         ),
@@ -583,7 +608,7 @@ async def request_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_premium_info(query, user_id):
-    """Show premium status information"""
+    """Premium holati haqida ma'lumot ko'rsatish"""
     if await is_premium(user_id):
         expiry_date = premium_users[user_id]["expiry"].strftime("%Y-%m-%d")
         await query.edit_message_text(
@@ -612,18 +637,18 @@ async def show_premium_info(query, user_id):
         )
 
         await query.edit_message_text(
-            "❌ Sizda faol premium obuna yo'q",
+            "❌ Sizda faol premium obuna mavjud emas",
             reply_markup=InlineKeyboardMarkup(buttons),
         )
 
 
 async def add_new_group(query, user_id):
-    """Start group addition process"""
+    """Guruh qo'shish jarayonini boshlash"""
     await query.edit_message_text(
         "➕ Guruh qo'shish:\n\n"
         "Guruh havolasini yuboring:\n"
         "Masalan: https://t.me/guruhnomi yoki @guruhnomi\n\n"
-        "Eslatma: Bot guruhda admin bo'lishi kerak!",
+        "Eslatma: Bot guruhda admin bo'lishi shart emas!",
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
         ),
@@ -632,7 +657,7 @@ async def add_new_group(query, user_id):
 
 
 async def list_user_groups(query, user_id):
-    """List all user's groups"""
+    """Foydalanuvchi guruhlarini ro'yxatini ko'rsatish"""
     if not user_groups.get(user_id):
         keyboard = [
             [InlineKeyboardButton("➕ Guruh qo'shish", callback_data="add_group")],
@@ -640,61 +665,67 @@ async def list_user_groups(query, user_id):
         ]
 
         await query.edit_message_text(
-            "❌ Sizda hech qanday guruh yo'q",
+            "❌ Sizda hozircha hech qanday guruh yo'q",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
         return
 
     message = "📋 Sizning guruhlaringiz:\n\n"
-    for idx, (chat_id, group) in enumerate(user_groups[user_id].items(), 1):
-        message += f"{idx}. {group['title']}\n👉 {group['link']}\n\n"
+    for idx, (group_id, group) in enumerate(user_groups[user_id].items(), 1):
+        message += (
+            f"{idx}. @{group.get('username', 'noma\'lum')}\n👉 {group['link']}\n\n"
+        )
 
     keyboard = [
         [InlineKeyboardButton("➕ Guruh qo'shish", callback_data="add_group")],
         [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
     ]
 
-    await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(
+        message,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.MARKDOWN,
+    )
 
 
 async def process_group_link(update, context, user_id, text):
-    """Process group link"""
+    """Guruh havolasini qayta ishlash"""
     try:
+        # Havoladan foydalanuvchi nomini ajratib olish
         if text.startswith("https://t.me/"):
             username = text.split("/")[-1]
         elif text.startswith("@"):
             username = text[1:]
         else:
-            raise ValueError("Noto'g'ri havola formati")
+            username = text  # @ belgisiz foydalanuvchi nomi deb hisoblash
 
-        chat = await context.bot.get_chat(f"@{username}")
-        if chat.type not in ["group", "supergroup"]:
-            raise ValueError("Bu guruh emas")
+        # So'rov parametrlarini olib tashlash
+        username = username.split("?")[0]
 
+        # Guruh ma'lumotlarini vaqtincha saqlash
         user_data[user_id] = {
             "temp_group": {
-                "id": chat.id,
-                "title": chat.title,
-                "link": f"https://t.me/{username}",
-            }
+                "username": username,
+                "link": (
+                    f"https://t.me/{username}" if not text.startswith("http") else text
+                ),
+            },
+            "state": "confirming_group",
         }
 
+        # Tasdiqlash tugmalarini ko'rsatish
         await update.message.reply_text(
-            f"Guruh topildi: {chat.title}\nTasdiqlang:",
+            f"Guruh havolasi: https://t.me/{username}\n\nBu guruhni papkangizga qo'shishni xohlaysizmi?",
             reply_markup=InlineKeyboardMarkup(
                 [
-                    [InlineKeyboardButton("✅ Qo'shish", callback_data="confirm_add")],
-                    [
-                        InlineKeyboardButton(
-                            "❌ Bekor qilish", callback_data="cancel_add"
-                        )
-                    ],
+                    [InlineKeyboardButton("✅ Ha", callback_data="confirm_add")],
+                    [InlineKeyboardButton("❌ Yo'q", callback_data="cancel_add")],
                 ]
             ),
         )
 
     except Exception as e:
-        logger.error(f"Guruh qo'shishda xato: {str(e)}")
+        logger.error(f"Guruh qo'shish xatosi: {str(e)}")
         await update.message.reply_text(
             f"❌ Xato: {str(e)}\nIltimos, qayta urinib ko'ring:",
             reply_markup=InlineKeyboardMarkup(
@@ -704,40 +735,53 @@ async def process_group_link(update, context, user_id, text):
 
 
 async def confirm_group_addition(query, context, user_id):
-    """Confirm adding a new group"""
+    """Yangi guruh qo'shishni tasdiqlash"""
     group_data = user_data.get(user_id, {}).get("temp_group")
     if not group_data:
         await query.edit_message_text("❌ Guruh ma'lumotlari topilmadi")
         return
 
-    if group_data["id"] in user_groups.get(user_id, {}):
+    # Guruh uchun tasodifiy ID yaratish (admin bo'lmaganda haqiqiy ID ni olish mumkin emas)
+    group_id = abs(hash(group_data["username"])) % (10**8)  # 8 xonali pseudo ID
+
+    if user_id not in user_groups:
+        user_groups[user_id] = {}
+
+    # Guruh allaqachon qo'shilganligini tekshirish (foydalanuvchi nomi bo'yicha)
+    existing_group = next(
+        (
+            g
+            for g in user_groups[user_id].values()
+            if g.get("username") == group_data["username"]
+        ),
+        None,
+    )
+
+    if existing_group:
         keyboard = [
             [InlineKeyboardButton("➕ Guruh qo'shish", callback_data="add_group")],
             [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
         ]
-
         await query.edit_message_text(
             "⚠️ Bu guruh allaqachon qo'shilgan",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
     else:
-        if user_id not in user_groups:
-            user_groups[user_id] = {}
-
-        user_groups[user_id][group_data["id"]] = {
-            "title": group_data["title"],
+        user_groups[user_id][group_id] = {
+            "title": group_data["username"],  # Haqiqiy sarlavhani bilmaymiz
             "link": group_data["link"],
+            "username": group_data["username"],
         }
         save_data(USER_GROUPS_FILE, user_groups)
 
         keyboard = [
             [InlineKeyboardButton("➕ Guruh qo'shish", callback_data="add_group")],
-            [InlineKeyboardButton("📋 Guruhlarim", callback_data="list_groups")],
+            [InlineKeyboardButton("📋 Mening guruhlarim", callback_data="list_groups")],
             [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
         ]
 
         await query.edit_message_text(
-            f"✅ {group_data['title']} guruhiga qo'shildi",
+            f"✅ @{group_data['username']} guruhi papkangizga qo'shildi!",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
@@ -746,7 +790,7 @@ async def confirm_group_addition(query, context, user_id):
 
 
 async def cancel_group_addition(query, user_id):
-    """Cancel group addition process"""
+    """Guruh qo'shish jarayonini bekor qilish"""
     if user_id in user_data and "temp_group" in user_data[user_id]:
         del user_data[user_id]["temp_group"]
 
@@ -756,27 +800,45 @@ async def cancel_group_addition(query, user_id):
     ]
 
     await query.edit_message_text(
-        "❌ Guruh qo'shish bekor qilindi", reply_markup=InlineKeyboardMarkup(keyboard)
+        "❌ Guruh qo'shish bekor qilindi",
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
 async def create_auto_folder(query, user_id):
-    """Create auto folder for groups"""
+    """Guruhlar uchun avto-papka yaratish"""
+    # Telegram hisobi ulanganligini tekshirish
+    if user_id not in telegram_accounts or not telegram_accounts[user_id].get(
+        "session"
+    ):
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "📲 Telegramni ulash", callback_data="connect_account"
+                )
+            ],
+            [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
+        ]
+        await query.edit_message_text(
+            "❌ Avto-papka yaratish uchun avval Telegram hisobingizni ulashingiz kerak!",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+
     if not user_groups.get(user_id):
         keyboard = [
             [InlineKeyboardButton("➕ Guruh qo'shish", callback_data="add_group")],
             [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
         ]
-
         await query.edit_message_text(
-            "❌ Avto-folder yaratish uchun avval guruh qo'shing",
+            "❌ Iltimos, avto-papka yaratish uchun avval guruhlar qo'shing",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
         return
 
     if user_id in auto_folders:
         await query.edit_message_text(
-            "ℹ️ Sizda allaqachon avto-folder mavjud",
+            "ℹ️ Sizda allaqachon avto-papka mavjud",
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
             ),
@@ -784,14 +846,14 @@ async def create_auto_folder(query, user_id):
         return
 
     auto_folders[user_id] = {
-        "folder_name": "Auto-Folder",
+        "folder_name": "Avto-Papka",
         "groups": list(user_groups[user_id].keys()),
     }
     save_data(AUTO_FOLDERS_FILE, auto_folders)
 
     await query.edit_message_text(
-        "✅ Avto-folder muvaffaqiyatli yaratildi!\n\n"
-        "Bu folder ichidagi barcha guruhlarga xabarlarni bir vaqtda yuborishingiz mumkin.",
+        "✅ Avto-papka muvaffaqiyatli yaratildi!\n\n"
+        "Endi siz bir vaqtning o'zida ushbu papkadagi barcha guruhlarga xabar yuborishingiz mumkin.",
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
         ),
@@ -799,22 +861,39 @@ async def create_auto_folder(query, user_id):
 
 
 async def prepare_to_send_message(query, user_id):
-    """Prepare to send message to groups"""
-    if not user_groups.get(user_id) and not auto_folders.get(user_id):
+    """Guruhlarga xabar yuborishni tayyorlash"""
+    # Avval telegram hisobi ulanganligini tekshirish
+    if user_id not in telegram_accounts or not telegram_accounts[user_id].get(
+        "session"
+    ):
         keyboard = [
-            [InlineKeyboardButton("➕ Guruh qo'shish", callback_data="add_group")],
+            [
+                InlineKeyboardButton(
+                    "📲 Telegramni ulash", callback_data="connect_account"
+                )
+            ],
             [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
         ]
-
         await query.edit_message_text(
-            "❌ Iltimos, avval guruh yoki avto-folder qo'shing",
+            "❌ Xabar yuborish uchun avval Telegram hisobingizni ulashingiz kerak!",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+
+    if not user_groups.get(user_id) and not auto_folders.get(user_id):
+        keyboard = [
+            [InlineKeyboardButton("➕ Guruh Qo'shish", callback_data="add_group")],
+            [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
+        ]
+        await query.edit_message_text(
+            "❌ Iltimos, avval guruhlar qo'shing",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
         return
 
     user_data[user_id] = {"state": "waiting_message"}
     await query.edit_message_text(
-        "Xabar matnini yuboring (bu xabar intervalda qayta-qayta yuboriladi):",
+        "Xabar matnini yuboring (bu xabar interval bilan guruhlarga yuboriladi):",
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
         ),
@@ -822,9 +901,10 @@ async def prepare_to_send_message(query, user_id):
 
 
 async def process_message_text(update, context, user_id, text):
-    """Process message text"""
+    """Xabar matnini qayta ishlash"""
     user_data[user_id] = {"message": text, "state": "waiting_interval"}
 
+    # Standart interval variantlari
     default_intervals = ["1", "2", "5", "10", "30"]
     if user_data.get(user_id, {}).get("interval"):
         default_intervals.insert(0, str(user_data[user_id]["interval"]))
@@ -838,37 +918,38 @@ async def process_message_text(update, context, user_id, text):
             InlineKeyboardButton(f"{m} daqiqa", callback_data=f"interval_{m}")
             for m in default_intervals[3:]
         ],
-        [InlineKeyboardButton("✏️ Maxsus interval", callback_data="custom_interval")],
+        [InlineKeyboardButton("✏️ Boshqa interval", callback_data="custom_interval")],
         [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
     ]
 
     await update.message.reply_text(
-        "Xabar intervalini tanlang:", reply_markup=InlineKeyboardMarkup(keyboard)
+        "Xabar yuborish intervalini tanlang:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
 async def set_message_interval(query, user_id):
-    """Set message sending interval"""
+    """Xabar yuborish intervalini sozlash"""
     current_interval = user_data.get(user_id, {}).get("interval", "o'rnatilmagan")
 
     keyboard = [
-        [InlineKeyboardButton("1 daqiqa", callback_data="interval_1")],
-        [InlineKeyboardButton("2 daqiqa", callback_data="interval_2")],
-        [InlineKeyboardButton("5 daqiqa", callback_data="interval_5")],
-        [InlineKeyboardButton("10 daqiqa", callback_data="interval_10")],
-        [InlineKeyboardButton("30 daqiqa", callback_data="interval_30")],
-        [InlineKeyboardButton("✏️ Maxsus", callback_data="custom_interval")],
+        [InlineKeyboardButton("1 min", callback_data="interval_1")],
+        [InlineKeyboardButton("2 min", callback_data="interval_2")],
+        [InlineKeyboardButton("5 min", callback_data="interval_5")],
+        [InlineKeyboardButton("10 min", callback_data="interval_10")],
+        [InlineKeyboardButton("30 min", callback_data="interval_30")],
+        [InlineKeyboardButton("✏️ Boshqa", callback_data="custom_interval")],
         [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
     ]
 
     await query.edit_message_text(
-        f"Joriy interval: {current_interval} daqiqa\n\nYangi intervalni tanlang:",
+        f"Joriy interval: {current_interval} min\n\nYangi intervalni tanlang:",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
 async def request_custom_interval(query, user_id):
-    """Request custom interval from user"""
+    """Foydalanuvchidan maxsus intervalni so'rash"""
     user_data[user_id] = {"state": "waiting_interval"}
     await query.edit_message_text(
         "Intervalni daqiqalarda kiriting (masalan: 15):",
@@ -879,16 +960,16 @@ async def request_custom_interval(query, user_id):
 
 
 async def apply_message_interval(query, context, user_id, interval):
-    """Apply selected message interval"""
+    """Tanlangan intervalni qo'llash"""
     try:
         if not context.job_queue:
-            raise RuntimeError("JobQueue ishga tushirilmagan")
+            raise RuntimeError("JobQueue ishga tushmagan")
 
         if user_id not in user_data or "message" not in user_data[user_id]:
             keyboard = [
                 [
                     InlineKeyboardButton(
-                        "✉️ Xabar yuborish", callback_data="send_message"
+                        "✉️ Xabar Yuborish", callback_data="send_message"
                     )
                 ],
                 [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
@@ -902,6 +983,7 @@ async def apply_message_interval(query, context, user_id, interval):
 
         user_data[user_id]["interval"] = interval
 
+        # Avvalgi ishlarni to'xtatish
         if user_id in message_jobs:
             for job in message_jobs[user_id]:
                 job.schedule_removal()
@@ -910,8 +992,8 @@ async def apply_message_interval(query, context, user_id, interval):
         message = user_data[user_id]["message"]
         job = context.job_queue.run_repeating(
             callback=send_user_messages,
-            interval=interval * 60,
-            first=5,
+            interval=interval * 60,  # daqiqalarni sekundga aylantirish
+            first=5,  # 5 soniyadan keyin birinchi xabar
             data={"user_id": user_id, "message": message},
             name=f"user_{user_id}_messages",
         )
@@ -925,30 +1007,30 @@ async def apply_message_interval(query, context, user_id, interval):
 
         await query.edit_message_text(
             f"✅ Sozlamalar saqlandi!\n\n"
-            f"Xabarlar har {interval} daqiqa davomida yuboriladi\n\n"
+            f"Xabarlar har {interval} daqiqada yuboriladi\n\n"
             f"Xabar matni:\n{message[:200]}{'...' if len(message) > 200 else ''}",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
     except Exception as e:
-        logger.error(f"Interval error: {str(e)}")
+        logger.error(f"Interval xatosi: {str(e)}")
         await query.edit_message_text(
             f"❌ Xato: {str(e)}\nIltimos, qayta urinib ko'ring.",
             reply_markup=InlineKeyboardMarkup(
-                [InlineKeyboardButton("🔙 Bosh menyu", callback_data="back_to_start")]
+                [InlineKeyboardButton("🔙 Bosh Menyu", callback_data="back_to_start")]
             ),
         )
 
 
 async def stop_scheduled_messages(query, context, user_id):
-    """Stop all scheduled messages"""
+    """Xabar yuborishni to'xtatish"""
     if user_id in message_jobs:
         for job in message_jobs[user_id]:
             job.schedule_removal()
         del message_jobs[user_id]
 
     await query.edit_message_text(
-        "✅ Barcha xabar yuborish to'xtatildi",
+        "✅ Xabar yuborish to'xtatildi",
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
         ),
@@ -956,150 +1038,72 @@ async def stop_scheduled_messages(query, context, user_id):
 
 
 async def send_user_messages(context: ContextTypes.DEFAULT_TYPE):
-    """Send messages to all groups in folder using user's Telegram account"""
+    """Foydalanuvchi guruhlariga xabarlarni yuborish"""
     try:
         job = context.job
         user_id = job.data["user_id"]
         message = job.data["message"]
 
-        # Telegram akkauntingizga ulanish
+        # Telegram hisobi ulanganligini tekshirish
         if user_id not in telegram_accounts or not telegram_accounts[user_id].get(
             "session"
         ):
             await context.bot.send_message(
                 chat_id=user_id,
-                text="❌ Telegram hisobingiz ulanmagan. Iltimos, avval hisobingizni ulang!",
+                text="❌ Telegram hisobingiz ulanmagan! Iltimos, avval hisobingizni ulang!",
             )
             return
 
-        client = TelegramClient(
-            StringSession(telegram_accounts[user_id]["session"]),
-            telegram_accounts[user_id]["api_id"],
-            telegram_accounts[user_id]["api_hash"],
-        )
-        await client.connect()
+        # Pyrogram client orqali xabarlarni yuborish
+        try:
+            async with PyrogramClient(
+                name=f"user_{user_id}",
+                api_id=API_ID,
+                api_hash=API_HASH,
+                session_string=telegram_accounts[user_id]["session"],
+                in_memory=True,
+            ) as client:
+                yuborildi = 0
+                xato = 0
 
-        sent_count = 0
+                # Foydalanuvchi guruhlariga xabar yuborish
+                if user_id in user_groups:
+                    for group_id, group in user_groups[user_id].items():
+                        try:
+                            # Username orqali yuborish (haqiqiy ID bo'lmasa ham)
+                            await client.send_message(
+                                chat_id=f"@{group['username']}", text=message
+                            )
+                            yuborildi += 1
+                            await asyncio.sleep(1)  # Flooddan saqlanish
+                        except Exception as e:
+                            logger.error(
+                                f"Xabar yuborishda xato {group['username']}: {str(e)}"
+                            )
+                            xato += 1
+                            continue
 
-        # Avto-folderdagi guruhlarga xabar yuborish
-        if user_id in auto_folders:
-            for group_id in auto_folders[user_id]["groups"]:
-                try:
-                    await client.send_message(entity=group_id, message=message)
-                    sent_count += 1
-                    await asyncio.sleep(1)  # Flooddan saqlanish
-                except Exception as e:
-                    logger.error(f"Xabar yuborishda xato {group_id}: {str(e)}")
-                    continue
-
-        # Agar xabarlar yuborilgan bo'lsa, foydalanuvchiga xabar yuborish
-        if sent_count > 0:
-            await context.bot.send_message(
-                chat_id=user_id, text=f"✅ {sent_count} ta guruhga xabar yuborildi!"
-            )
-        else:
+                # Foydalanuvchiga xabar yuborish haqida xabar
+                if yuborildi > 0:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=f"✅ Xabar {yuborildi} guruhga yuborildi!"
+                        + (f" (Xato: {xato})" if xato > 0 else ""),
+                    )
+                else:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text="❌ Xabar hech qanday guruhga yuborilmadi. Guruhlaringizni tekshiring.",
+                    )
+        except Exception as e:
+            logger.error(f"Pyrogram client xatosi: {str(e)}")
             await context.bot.send_message(
                 chat_id=user_id,
-                text="❌ Hech qanday guruhga xabar yuborilmadi. Guruhlarni tekshiring.",
+                text="❌ Telegram hisobingizga ulanishda xato. Iltimos, qayta ulaning.",
             )
 
     except Exception as e:
         logger.error(f"Xabar yuborishda xato: {str(e)}")
-
-
-async def prepare_to_send_message(query, user_id):
-    """Prepare to send message to groups"""
-    if not user_groups.get(user_id) and not auto_folders.get(user_id):
-        keyboard = [
-            [InlineKeyboardButton("➕ Guruh qo'shish", callback_data="add_group")],
-            [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
-        ]
-
-        await query.edit_message_text(
-            "❌ Iltimos, avval guruh yoki avto-folder qo'shing",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-        )
-        return
-
-    user_data[user_id] = {"state": "waiting_message"}
-    await query.edit_message_text(
-        "Xabar matnini yuboring (bu xabar intervalda qayta-qayta yuboriladi):",
-        reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
-        ),
-    )
-
-
-async def start_messaging(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Xabar yuborishni boshlash"""
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-
-    if user_id in message_jobs:
-        await query.edit_message_text("✅ Xabar yuborish allaqachon boshlangan")
-        return
-
-    # Intervalni olish (default: 1 daqiqa)
-    interval = user_data.get(user_id, {}).get("interval", 1)
-
-    # Xabarni olish
-    message = user_data.get(user_id, {}).get("message", "")
-    if not message:
-        await query.edit_message_text(
-            "❌ Xabar matni topilmadi. Iltimos, avval xabar yuboring."
-        )
-        return
-
-    # Jobni boshlash
-    job = context.job_queue.run_repeating(
-        send_user_messages,
-        interval=interval * 60,  # daqiqalarni sekundga aylantirish
-        first=5,  # 5 soniyadan keyin birinchi xabar
-        data={"user_id": user_id, "message": message},
-        name=f"user_{user_id}_messages",
-    )
-
-    message_jobs[user_id] = [job]
-
-    keyboard = [
-        [InlineKeyboardButton("🛑 To'xtatish", callback_data="stop_messages")],
-        [
-            InlineKeyboardButton(
-                "⚙️ Intervalni o'zgartirish", callback_data="set_interval"
-            )
-        ],
-    ]
-
-    await query.edit_message_text(
-        f"✅ Xabar yuborish boshlandi!\n"
-        f"Interval: har {interval} daqiqa\n\n"
-        f"Xabar matni:\n{message[:200]}{'...' if len(message) > 200 else ''}",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
-
-
-async def stop_messaging(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Xabar yuborishni to'xtatish"""
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-
-    if user_id not in message_jobs:
-        await query.edit_message_text("ℹ️ Xabar yuborish allaqachon to'xtatilgan")
-        return
-
-    # Barcha joblarni to'xtatish
-    for job in message_jobs[user_id]:
-        job.schedule_removal()
-    del message_jobs[user_id]
-
-    await query.edit_message_text(
-        "🛑 Xabar yuborish to'xtatildi",
-        reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("Qayta boshlash", callback_data="start_messages")]]
-        ),
-    )
 
 
 async def connect_telegram_account(query, user_id):
@@ -1111,11 +1115,10 @@ async def connect_telegram_account(query, user_id):
         ):
             user_data[user_id] = {"state": "waiting_api_id"}
             await query.edit_message_text(
-                "🔹 <b>Telegram API sozlamalari</b>\n\n"
-                "1. my.telegram.org saytiga kiring\n"
-                "2. 'API development tools' bo'limini tanlang\n"
-                "3. 'App title' va 'Short name' to'ldiring\n"
-                "4. Olingan <b>API_ID</b> ni yuboring:",
+                "🔹 <b>Telegram API Sozlamalari</b>\n\n"
+                "API ID va API HASH ni olish uchun quyidagi videoni ko'ring:\n"
+                "👉 https://www.youtube.com/watch?v=8naENmP3rg4\n\n"
+                "Keyin API_ID ni kiriting:",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(
                     [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
@@ -1127,9 +1130,9 @@ async def connect_telegram_account(query, user_id):
         if not telegram_accounts[user_id].get("phone"):
             user_data[user_id] = {"state": "waiting_phone_number"}
             await query.edit_message_text(
-                "📱 <b>Telegram hisobingizga ulanish uchun</b>\n\n"
-                "Telefon raqamingizni yuboring:\n"
-                "Namuna: <code>+998901234567</code>",
+                "📱 <b>Telegram hisobingizni ulang</b>\n\n"
+                "Telefon raqamingizni kiriting:\n"
+                "Masalan: <code>+998901234567</code>",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(
                     [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
@@ -1137,10 +1140,12 @@ async def connect_telegram_account(query, user_id):
             )
             return
 
-        # Agar kod kutilayotgan bo'lsa
-        if user_data.get(user_id, {}).get("state") == "waiting_verification_code":
+        # Agar tasdiqlash kodi kutilayotgan bo'lsa
+        elif user_data.get(user_id, {}).get("state") == "waiting_verification_code":
             await query.edit_message_text(
-                "🔑 Telegramdan kelgan 5-raqamli kodni yuboring:",
+                "🔑 Telegramdan kelgan 5 xonali kodni kiriting:\n"
+                "<b>Format:</b> <code>12_345</code> (qulaylik uchun guruhlab)",
+                parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(
                     [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
                 ),
@@ -1150,7 +1155,7 @@ async def connect_telegram_account(query, user_id):
         # Agar parol kutilayotgan bo'lsa (2FA)
         if user_data.get(user_id, {}).get("state") == "waiting_password":
             await query.edit_message_text(
-                "🔒 Iltimos, 2-bosqich parolini kiriting:",
+                "🔒 Iltimos, 2FA parolingizni kiriting:",
                 reply_markup=InlineKeyboardMarkup(
                     [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
                 ),
@@ -1163,484 +1168,147 @@ async def connect_telegram_account(query, user_id):
             return
 
     except Exception as e:
-        logger.error(f"Hisobni ulashda xato: {str(e)}")
+        logger.error(f"Hisob ulash xatosi: {str(e)}")
         await query.edit_message_text(
-            "❌ Hisobni ulashda xato yuz berdi. Iltimos, qaytadan urinib ko'ring.",
+            "❌ Hisob ulashda xato. Iltimos, qayta urinib ko'ring.",
             reply_markup=InlineKeyboardMarkup(
                 [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
             ),
         )
 
 
+def is_valid_code_format(code: str) -> bool:
+    """Kod formati 12_345 ko'rinishida ekanligini tekshiradi"""
+    # 1. Faqat raqamlar va pastki chiziq bo'lishi kerak
+    if not re.fullmatch(r"^[\d_]+$", code):
+        return False
+
+    # 2. Pastki chiziqlar orasida 3 ta raqam bo'lishi kerak
+    parts = code.split("_")
+    if any(len(part) != 3 for part in parts[1:]):
+        return False
+
+    # 3. Umumiy uzunligi 5-7 belgidan oshmasligi
+    clean_code = code.replace("_", "")
+    return len(clean_code) in (5, 6, 7)
+
+
+# async def process_phone_number(update, context, user_id, phone_number):
+#     """Telefon raqamini qayta ishlash va tasdiqlash kodini yuborish"""
+#     try:
+#         # Telefon raqamini tekshirish
+#         if not re.match(r"^\+[0-9]{10,14}$", phone_number):
+#             await update.message.reply_text(
+#                 "❌ Noto'g'ri telefon raqami formati! Iltimos, +998901234567 formatida kiriting."
+#             )
+#             return
+
+#         # Pyrogram clientni ishga tushirish
+#         client = PyrogramClient(
+#             name=f"user_{user_id}",
+#             api_id=API_ID,
+#             api_hash=API_HASH,
+#             in_memory=True,
+#         )
+
+#         await client.connect()
+
+#         try:
+#             # Telefon raqamiga kod yuborish
+#             sent_code = await client.send_code(phone_number)
+
+#             # Ma'lumotlarni saqlash
+#             telegram_accounts[user_id] = {
+#                 "phone": phone_number,
+#                 "client": client,
+#                 "phone_code_hash": sent_code.phone_code_hash,
+#             }
+#             save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
+
+#             await update.message.reply_text(
+#                 "✅ Tasdiqlash kodi yuborildi! Iltimos, Telegramdan kelgan 5 xonali kodni kiriting.\n\n"
+#                 "Kodni quyidagi formatda kiriting: <code>12345</code> yoki <code>12 345</code>",
+#                 parse_mode="HTML",
+#                 reply_markup=InlineKeyboardMarkup(
+#                     [
+#                         [
+#                             InlineKeyboardButton(
+#                                 "🔄 Kodni qayta yuborish", callback_data="resend_code"
+#                             )
+#                         ],
+#                         [
+#                             InlineKeyboardButton(
+#                                 "🔙 Orqaga", callback_data="back_to_start"
+#                             )
+#                         ],
+#                     ]
+#                 ),
+#             )
+
+#         except FloodWait as e:
+#             wait_time = e.value
+#             await update.message.reply_text(
+#                 f"❌ Juda ko'p urinishlar! Iltimos, {wait_time} soniya kutib turing.",
+#                 reply_markup=InlineKeyboardMarkup(
+#                     [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
+#                 ),
+#             )
+#             await client.disconnect()
+
+#         except PhoneNumberInvalid:
+#             await update.message.reply_text(
+#                 "❌ Noto'g'ri telefon raqami! Iltimos, to'g'ri raqam kiriting.",
+#                 reply_markup=InlineKeyboardMarkup(
+#                     [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
+#                 ),
+#             )
+#             await client.disconnect()
+
+#     except Exception as e:
+#         logger.error(f"Telefon raqamini qayta ishlashda xato: {str(e)}", exc_info=True)
+#         await update.message.reply_text(
+#             f"❌ Tizim xatosi. Xato tafsilotlari: {str(e)}",
+#             reply_markup=InlineKeyboardMarkup(
+#                 [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
+#             ),
+#         )
+
 async def process_phone_number(update, context, user_id, phone_number):
-    """Telefon raqamini qabul qilish va kod so'rovini yuborish"""
+    """Telefon raqamini qayta ishlash va tasdiqlash kodini yuborish"""
     try:
         # Telefon raqamini tekshirish
         if not re.match(r"^\+[0-9]{10,14}$", phone_number):
-            await update.message.reply_text("❌ Noto'g'ri telefon raqami formati!")
+            await update.message.reply_text(
+                "❌ Noto'g'ri telefon raqami formati! Iltimos, +998901234567 formatida kiriting."
+            )
             return
 
-        # Telethon clientini yaratish
-        client = TelegramClient(
-            StringSession(),
-            telegram_accounts[user_id]["api_id"],
-            telegram_accounts[user_id]["api_hash"],
+        # Pyrogram clientni ishga tushirish
+        client = PyrogramClient(
+            name=f"user_{user_id}",
+            api_id=API_ID,
+            api_hash=API_HASH,
+            in_memory=True,
         )
+
         await client.connect()
 
-        # Kod yuborish
         try:
-            sent_code = await client.send_code_request(phone_number)
+            # Telefon raqamiga kod yuborish
+            sent_code = await client.send_code(phone_number)
 
             # Ma'lumotlarni saqlash
-            telegram_accounts[user_id]["phone"] = phone_number
-            user_data[user_id] = {
-                "state": "waiting_verification_code",
+            telegram_accounts[user_id] = {
+                "phone": phone_number,
                 "client": client,
                 "phone_code_hash": sent_code.phone_code_hash,
             }
             save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
 
             await update.message.reply_text(
-                "✅ Kod yuborildi! Telegramdan kelgan 5-raqamli kodni kiriting.",
-                reply_markup=InlineKeyboardMarkup(
-                    [
-                        [
-                            InlineKeyboardButton(
-                                "🔄 Qayta yuborish", callback_data="resend_code"
-                            )
-                        ],
-                        [
-                            InlineKeyboardButton(
-                                "🔙 Orqaga", callback_data="back_to_start"
-                            )
-                        ],
-                    ]
-                ),
-            )
-
-        except FloodWaitError as e:
-            await update.message.reply_text(
-                f"❌ Juda ko'p urinishlar! {e.seconds} soniyadan keyin qayta urinib ko'ring."
-            )
-            await client.disconnect()
-        except Exception as e:
-            await update.message.reply_text(f"❌ Kod yuborishda xato: {str(e)}")
-            await client.disconnect()
-
-    except Exception as e:
-        logger.error(f"process_phone_number xatolik: {str(e)}")
-        await update.message.reply_text(
-            "❌ Tizim xatosi. Iltimos, keyinroq qayta urinib ko'ring.",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
-            ),
-        )
-
-
-async def process_verification_code(update, context, user_id, code):
-    """Tasdiqlash kodini qabul qilish"""
-    try:
-        if user_id not in user_data or "client" not in user_data[user_id]:
-            raise ValueError("Telegram ulanish jarayoni topilmadi")
-
-        client = user_data[user_id]["client"]
-        phone = telegram_accounts[user_id]["phone"]
-        phone_code_hash = user_data[user_id]["phone_code_hash"]
-
-        # Kodni tozalash (faqat raqamlarni olish)
-        clean_code = re.sub(r"[^0-9]", "", code)
-
-        try:
-            # Kirishga urinish
-            await client.sign_in(
-                phone=phone,
-                code=clean_code,
-                phone_code_hash=phone_code_hash
-            )
-            
-            # Agar 2FA yoqilgan bo'lsa
-        except SessionPasswordNeededError:
-            user_data[user_id]["state"] = "waiting_password"
-            await update.message.reply_text(
-                "🔒 Hisobingizda 2-bosqich himoyasi yoqilgan.\nIltimos, parolingizni yuboring:",
-                reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
-                ),
-            )
-            return
-
-        # Muvaffaqiyatli ulanish
-        session_string = StringSession.save(client.session)
-        telegram_accounts[user_id]["session"] = session_string
-        telegram_accounts[user_id]["connected_at"] = datetime.now()
-        save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
-
-        await client.disconnect()
-        if user_id in user_data:
-            del user_data[user_id]
-
-        await update.message.reply_text(
-            "✅ Telegram hisobingiz muvaffaqiyatli ulandi!",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🏠 Bosh menyu", callback_data="back_to_start")]]
-            ),
-        )
-
-    except PhoneCodeInvalidError:
-        await update.message.reply_text(
-            "❌ Noto'g'ri tasdiqlash kodi. Iltimos, qayta urinib ko'ring.",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
-            ),
-        )
-    except Exception as e:
-        logger.error(f"Tasdiqlash xatosi: {str(e)}")
-        await update.message.reply_text(
-            f"❌ Xato: {str(e)}",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
-            ),
-        )
-        # Xato yuz berganda tozalash
-        if user_id in user_data and "client" in user_data[user_id]:
-            try:
-                await user_data[user_id]["client"].disconnect()
-            except:
-                pass
-            del user_data[user_id]
-
-
-async def send_verification_code(phone: str, api_id: int, api_hash: str):
-    client = TelegramClient(StringSession(), api_id, api_hash)
-    await client.connect()
-    sent_code = await client.send_code_request(phone)
-    await client.disconnect()
-    return sent_code
-
-    try:
-        client = TelegramClient(StringSession(), api_id, api_hash)
-        await client.connect()
-
-        # Kodni yuborish (5 daqiqalik timeout bilan)
-        sent_code = await asyncio.wait_for(client.send_code_request(phone), timeout=300)
-        return sent_code
-
-    except FloodWaitError as e:
-        wait_time = e.seconds // 60
-        raise Exception(
-            f"Kod so'rovlar chegarasi! Iltimos, {wait_time} daqiqa kutib turing."
-        )
-    except Exception as e:
-        raise Exception(f"Kod yuborishda xato: {str(e)}")
-    finally:
-        if client:
-            await client.disconnect()
-
-
-async def resend_verification_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-
-    if user_id not in user_data or "phone" not in user_data[user_id]:
-        await update.message.reply_text("❌ Avval telefon raqamingizni kiriting")
-        return
-
-    # So'nggi kod so'rovidan 2 daqiqa o'tganligini tekshirish
-    last_request = user_data[user_id].get("last_code_request")
-    if last_request and (datetime.now() - last_request).total_seconds() < 120:
-        await update.message.reply_text(
-            "⏳ Kodni qayta yuborish uchun 2 daqiqa kutishingiz kerak!",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
-            ),
-        )
-        return
-
-    try:
-        # Yangi kod yuborish
-        sent_code = await send_verification_code(
-            user_data[user_id]["phone"],
-            telegram_accounts[user_id]["api_id"],
-            telegram_accounts[user_id]["api_hash"],
-        )
-
-        # Yangilangan ma'lumotlarni saqlash
-        user_data[user_id].update(
-            {
-                "phone_code_hash": sent_code.phone_code_hash,
-                "last_code_request": datetime.now(),
-                "code_attempts": 0,
-            }
-        )
-
-        await update.message.reply_text(
-            "🔄 Yangi tasdiqlash kodi yuborildi!",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
-            ),
-        )
-
-    except Exception as e:
-        await update.message.reply_text(
-            f"❌ Xato: {str(e)}",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
-            ),
-        )
-
-
-async def process_2fa_password(update, context, user_id, password):
-    """2FA parolini qabul qilish"""
-    try:
-        if user_id not in user_data or "client" not in user_data[user_id]:
-            raise ValueError("Telegram ulanish jarayoni topilmadi")
-
-        client = user_data[user_id]["client"]
-        
-        # Parol bilan kirish
-        await client.sign_in(password=password)
-        
-        # Muvaffaqiyatli ulanish
-        session_string = StringSession.save(client.session)
-        telegram_accounts[user_id]["session"] = session_string
-        telegram_accounts[user_id]["connected_at"] = datetime.now()
-        save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
-
-        await client.disconnect()
-        if user_id in user_data:
-            del user_data[user_id]
-
-        await update.message.reply_text(
-            "✅ Telegram hisobingiz muvaffaqiyatli ulandi!",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🏠 Bosh menyu", callback_data="back_to_start")]]
-            ),
-        )
-
-    except Exception as e:
-        logger.error(f"2FA xatosi: {str(e)}")
-        await update.message.reply_text(
-            f"❌ Xato: {str(e)}\nIltimos, qayta urinib ko'ring.",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
-            ),
-        )
-        # Xato yuz berganda tozalash
-        if user_id in user_data and "client" in user_data[user_id]:
-            try:
-                await user_data[user_id]["client"].disconnect()
-            except:
-                pass
-            del user_data[user_id]
-
-
-async def complete_telegram_connection(
-    update, context, user_id, client, phone, folder_created=False
-):
-    """Finalize Telegram connection after successful login"""
-    try:
-        # Get session string
-        session_string = StringSession.save(client.session)
-
-        # Save account info permanently
-        if user_id not in telegram_accounts:
-            telegram_accounts[user_id] = {}
-
-        telegram_accounts[user_id].update(
-            {"phone": phone, "session": session_string, "connected_at": datetime.now()}
-        )
-        save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
-
-        # Clean up
-        await client.disconnect()
-        if user_id in user_data:
-            del user_data[user_id]
-
-        message = "✅ Telegram hisobingiz muvaffaqiyatli ulandi!\n\n"
-        if folder_created:
-            message += "📂 'Auto' nomli folder yaratildi\n\n"
-        message += "Endi botning barcha funksiyalaridan foydalanishingiz mumkin."
-
-        await update.message.reply_text(
-            message,
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🏠 Bosh menyu", callback_data="back_to_start")]]
-            ),
-        )
-
-    except Exception as e:
-        logger.error(f"Connection completion error: {str(e)}")
-        await update.message.reply_text(
-            "❌ Hisobingiz ulandi, lekin ma'lumotlarni saqlashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring.",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
-            ),
-        )
-        # Clean up
-        if user_id in user_data:
-            del user_data[user_id]
-        try:
-            await client.disconnect()
-        except:
-            pass
-
-
-async def disconnect_telegram_account(query, user_id):
-    """Disconnect Telegram account"""
-    try:
-        if user_id not in telegram_accounts or not telegram_accounts[user_id].get(
-            "session"
-        ):
-            await query.edit_message_text(
-                "ℹ️ Sizda ulangan telegram hisobi mavjud emas",
-                reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
-                ),
-            )
-            return
-
-        # Disconnect client if exists
-        if "client" in telegram_accounts[user_id]:
-            try:
-                await telegram_accounts[user_id]["client"].disconnect()
-            except:
-                pass
-
-        # Clear session but keep API credentials
-        telegram_accounts[user_id].pop("session", None)
-        telegram_accounts[user_id].pop("client", None)
-        telegram_accounts[user_id].pop("phone_code_hash", None)
-        save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
-
-        await query.edit_message_text(
-            "✅ Telegram hisobingiz muvaffaqiyatli uzildi",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🏠 Bosh menyu", callback_data="back_to_start")]]
-            ),
-        )
-    except Exception as e:
-        logger.error(f"Disconnect error: {str(e)}")
-        await query.edit_message_text(
-            "❌ Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
-            ),
-        )
-
-
-async def show_telegram_account_info(query, user_id):
-    """Show connected Telegram account info"""
-    try:
-        if user_id not in telegram_accounts or not telegram_accounts[user_id].get(
-            "session"
-        ):
-            keyboard = [
-                [InlineKeyboardButton("📲 Ulash", callback_data="connect_account")],
-                [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
-            ]
-            await query.edit_message_text(
-                "❌ Sizda ulangan telegram hisobi mavjud emas",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-            )
-            return
-
-        account = telegram_accounts[user_id]
-        connected_at = account.get("connected_at", datetime.now())
-        if isinstance(connected_at, str):
-            connected_at = datetime.fromisoformat(connected_at)
-
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    "❌ Ulanishni uzish", callback_data="disconnect_account"
-                )
-            ],
-            [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
-        ]
-
-        message = "📲 Ulangan Telegram hisobi:\n\n"
-        message += f"📞 Telefon: {account.get('phone', 'Noma\'lum')}\n"
-        message += f"🕒 Ulangan vaqt: {connected_at.strftime('%Y-%m-%d %H:%M')}\n"
-
-        if account.get("api_id"):
-            message += "\n✅ API ma'lumotlari mavjud\n"
-
-        await query.edit_message_text(
-            message, reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    except Exception as e:
-        logger.error(f"Account info error: {str(e)}")
-        await query.edit_message_text(
-            "❌ Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
-            ),
-        )
-
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    text = update.message.text.strip()
-    state = user_data.get(user_id, {}).get("state")
-
-    try:
-        # API ID qabul qilish
-        if state == "waiting_api_id":
-            try:
-                api_id = int(text)
-                telegram_accounts[user_id] = {"api_id": api_id}
-                user_data[user_id] = {"state": "waiting_api_hash"}
-                await update.message.reply_text(
-                    "✅ API ID qabul qilindi!\n\n" "Endi <b>API_HASH</b> ni yuboring:",
-                    parse_mode="HTML",
-                )
-            except ValueError:
-                await update.message.reply_text(
-                    "❌ API_ID faqat raqamlardan iborat bo'lishi kerak!"
-                )
-
-        # API HASH qabul qilish
-        elif state == "waiting_api_hash":
-            telegram_accounts[user_id]["api_hash"] = text
-            save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
-            user_data[user_id] = {"state": "waiting_phone_number"}
-            await update.message.reply_text(
-                "✅ API ma'lumotlari saqlandi!\n\n"
-                "Endi telefon raqamingizni yuboring:\n"
-                "Namuna: <code>+998901234567</code>",
+                "✅ Tasdiqlash kodi yuborildi! Iltimos, Telegramdan kelgan 5 xonali kodni kiriting.\n\n"
+                "Kodni quyidagi formatda kiriting: <code>12345</code> yoki <code>12 345</code>",
                 parse_mode="HTML",
-            )
-
-        # Telefon raqamini qabul qilish
-        elif state == "waiting_phone_number":
-            if not re.match(r"^\+[0-9]{10,14}$", text):
-                await update.message.reply_text("❌ Noto'g'ri telefon raqami formati!")
-                return
-
-            telegram_accounts[user_id]["phone"] = text
-            save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
-
-            # Telethon clientini ishga tushirish
-            client = TelegramClient(
-                StringSession(),
-                telegram_accounts[user_id]["api_id"],
-                telegram_accounts[user_id]["api_hash"],
-            )
-            await client.connect()
-
-            # Kod yuborish
-            sent_code = await client.send_code_request(text)
-            user_data[user_id] = {
-                "state": "waiting_verification_code",
-                "client": client,
-                "phone_code_hash": sent_code.phone_code_hash,
-            }
-
-            # Kod kutayotgan holatda quyidagi tugmalarni ko'rsatish
-            await update.message.reply_text(
-                "✅ Tasdiqlash kodi yuborildi!\n\n"
-                "Telegramdan kelgan 5-raqamli kodni yuboring.\n\n"
-                "Agar kod kelmasa:",
                 reply_markup=InlineKeyboardMarkup(
                     [
                         [
@@ -1657,256 +1325,654 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ),
             )
 
-        # Kodni tekshirish
-        elif state == "waiting_verification_code":
-            client = user_data[user_id]["client"]
-            try:
-                await client.sign_in(
-                    phone=telegram_accounts[user_id]["phone"],
-                    code=text,
-                    phone_code_hash=user_data[user_id]["phone_code_hash"],
-                )
+        except FloodWait as e:
+            wait_time = e.value
+            await update.message.reply_text(
+                f"❌ Juda ko'p urinishlar! Iltimos, {wait_time} soniya kutib turing.",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
+                ),
+            )
+            await client.disconnect()
 
-                # "Auto" folderini yaratish
-                try:
-                    await client(
-                        functions.messages.CreateChatRequest(title="Auto", users=[])
-                    )
-                    folder_info = "\n📂 'Auto' folderi yaratildi"
-                except Exception as e:
-                    logger.warning(f"Folder yaratishda xato: {str(e)}")
-                    folder_info = ""
-
-                # Sessionni saqlash
-                session_string = StringSession.save(client.session)
-                telegram_accounts[user_id]["session"] = session_string
-                save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
-
-                await update.message.reply_text(
-                    f"✅ Telegram hisobingiz ulandi!{folder_info}",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🏠 Bosh menyu", callback_data="back_to_start"
-                                )
-                            ]
-                        ]
-                    ),
-                )
-
-            except SessionPasswordNeededError:
-                user_data[user_id]["state"] = "waiting_password"
-                await update.message.reply_text(
-                    "🔒 Iltimos, 2-bosqich parolini kiriting:"
-                )
-
-            except Exception as e:
-                await update.message.reply_text(f"❌ Xato: {str(e)}")
-
-        # Parolni qabul qilish (2FA)
-        elif state == "waiting_password":
-            client = user_data[user_id]["client"]
-            try:
-                await client.sign_in(password=text)
-
-                session_string = StringSession.save(client.session)
-                telegram_accounts[user_id]["session"] = session_string
-                save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
-
-                await update.message.reply_text(
-                    "✅ Muvaffaqiyatli ulandi!",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🏠 Bosh menyu", callback_data="back_to_start"
-                                )
-                            ]
-                        ]
-                    ),
-                )
-            except Exception as e:
-                await update.message.reply_text(f"❌ Xato: {str(e)}")
+        except PhoneNumberInvalid:
+            await update.message.reply_text(
+                "❌ Noto'g'ri telefon raqami! Iltimos, to'g'ri raqam kiriting.",
+                reply_markup=InlineKeyboardMarkup(
+                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
+                ),
+            )
+            await client.disconnect()
 
     except Exception as e:
-        logger.error(f"Xatolik: {str(e)}")
+        logger.error(f"Telefon raqamini qayta ishlashda xato: {str(e)}", exc_info=True)
         await update.message.reply_text(
-            "❌ Tizim xatosi. Iltimos, qayta urinib ko'ring.",
+            f"❌ Tizim xatosi. Xato tafsilotlari: {str(e)}",
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🏠 Bosh menyu", callback_data="back_to_start")]]
+                [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
             ),
         )
 
-
-async def send_code_with_retry(phone: str, max_retries=3):
-    for attempt in range(max_retries):
-        try:
-            client = TelegramClient(StringSession(), API_ID, API_HASH)
-            await client.connect()
-            sent_code = await client.send_code_request(phone)
-            return sent_code
-        except FloodWaitError as e:
-            if attempt == max_retries - 1:
-                raise
-            await asyncio.sleep(e.seconds)
-        finally:
-            await client.disconnect()
-
-
-async def create_auto_folder(query, user_id):
-    """Create auto folder as a list in Telegram"""
+async def process_verification_code(update, context, user_id, code):
+    """Tasdiqlash kodini qayta ishlash"""
     try:
-        if user_id not in telegram_accounts or not telegram_accounts[user_id].get(
-            "session"
-        ):
-            await query.edit_message_text(
-                "❌ Avval Telegram hisobingizni ulashingiz kerak!",
+        # Faqat raqamlarni olib tashlash
+        clean_code = re.sub(r"[^0-9]", "", code)
+
+        # Kod uzunligini tekshirish
+        if len(clean_code) != 5:
+            await update.message.reply_text(
+                "❌ Kod 5 raqamdan iborat bo'lishi kerak! Iltimos, qayta kiriting.",
                 reply_markup=InlineKeyboardMarkup(
                     [
                         [
                             InlineKeyboardButton(
-                                "📲 Ulash", callback_data="connect_account"
+                                "🔄 Qayta yuborish", callback_data="resend_code"
                             )
-                        ]
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "🔙 Orqaga", callback_data="back_to_start"
+                            )
+                        ],
                     ]
                 ),
             )
             return
 
-        # Initialize Telegram client
-        client = TelegramClient(
-            StringSession(telegram_accounts[user_id]["session"]),
-            telegram_accounts[user_id]["api_id"],
-            telegram_accounts[user_id]["api_hash"],
-        )
-        await client.connect()
+        # Foydalanuvchi ma'lumotlarini tekshirish
+        if (
+            user_id not in telegram_accounts
+            or "phone_code_hash" not in telegram_accounts[user_id]
+        ):
+            await update.message.reply_text(
+                "❌ Avval telefon raqamingizni kiriting!",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
+                ),
+            )
+            return
 
-        # Create folder as a list
+        client = telegram_accounts[user_id]["client"]
+        phone = telegram_accounts[user_id]["phone"]
+        phone_code_hash = telegram_accounts[user_id]["phone_code_hash"]
+
         try:
-            result = await client(
-                functions.messages.CreateChatRequest(title="Auto", users=[])
+            # Kod bilan kirish
+            await client.sign_in(
+                phone_number=phone,
+                phone_code_hash=phone_code_hash,
+                phone_code=clean_code,
             )
 
-            # Save folder info
-            if user_id not in auto_folders:
-                auto_folders[user_id] = {}
+            # Muvaffaqiyatli ulanish
+            session_string = await client.export_session_string()
+            telegram_accounts[user_id]["session"] = session_string
+            telegram_accounts[user_id]["connected_at"] = datetime.now()
+            save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
 
-            auto_folders[user_id] = {
-                "folder_id": result.chats[0].id,
-                "title": "Auto",
-                "groups": [],
-            }
-            save_data(AUTO_FOLDERS_FILE, auto_folders)
+            await update.message.reply_text(
+                "✅ Muvaffaqiyatli ulandi! Endi siz botning barcha funksiyalaridan foydalanishingiz mumkin.",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        InlineKeyboardButton(
+                            "🏠 Bosh menyu", callback_data="back_to_start"
+                        )
+                    ]
+                ),
+            )
 
-            await query.edit_message_text(
-                "✅ 'Auto' listi muvaffaqiyatli yaratildi!",
+        except SessionPasswordNeeded:
+            telegram_accounts[user_id]["state"] = "waiting_password"
+            await update.message.reply_text(
+                "🔒 Hisobingizda 2-qadam autentifikatsiya yoqilgan. Iltimos, parolingizni kiriting:",
+                reply_markup=InlineKeyboardMarkup(
+                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
+                ),
+            )
+
+        except PhoneCodeInvalid:
+            await update.message.reply_text(
+                "❌ Noto'g'ri tasdiqlash kodi! Iltimos, yangi kod so'rang va qayta urinib ko'ring.",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        InlineKeyboardButton(
+                            "🔄 Yangi kod so'rash", callback_data="resend_code"
+                        )
+                    ],
+                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
+                ),
+            )
+
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ Xatolik yuz berdi: {str(e)}",
+                reply_markup=InlineKeyboardMarkup(
+                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
+                ),
+            )
+
+    except Exception as e:
+        logger.error(f"Tasdiqlash kodini qayta ishlashda xato: {str(e)}")
+        await update.message.reply_text(
+            "❌ Tizim xatosi. Iltimos, keyinroq qayta urinib ko'r ing.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
+            ),
+        )
+
+def format_code(raw_code: str) -> str:
+    """Foydalanuvchi kiritgan kodni standart formatga keltiradi"""
+    clean_code = re.sub(r"[^0-9]", "", raw_code)
+    if len(clean_code) <= 3:
+        return clean_code
+    return f"{clean_code[:-3]}_{clean_code[-3:]}"
+
+
+async def process_verification_code(update, context, user_id, code):
+    """Tasdiqlash kodini qayta ishlash"""
+    try:
+        # Faqat raqamlarni olib tashlash
+        clean_code = re.sub(r"[^0-9]", "", code)
+
+        # Kod uzunligini tekshirish
+        if len(clean_code) != 5:
+            await update.message.reply_text(
+                "❌ Kod 5 raqamdan iborat bo'lishi kerak! Iltimos, qayta kiriting.",
                 reply_markup=InlineKeyboardMarkup(
                     [
                         [
                             InlineKeyboardButton(
-                                "🏠 Bosh menyu", callback_data="back_to_start"
+                                "🔄 Qayta yuborish", callback_data="resend_code"
                             )
-                        ]
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "🔙 Orqaga", callback_data="back_to_start"
+                            )
+                        ],
                     ]
                 ),
             )
-        except Exception as e:
-            if "CHAT_TITLE_EMPTY" in str(e):
-                await query.edit_message_text(
-                    "ℹ️ 'Auto' listi allaqachon mavjud",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🏠 Bosh menyu", callback_data="back_to_start"
-                                )
-                            ]
-                        ]
-                    ),
-                )
-            else:
-                raise e
+            return
 
-        await client.disconnect()
+        # Foydalanuvchi ma'lumotlarini tekshirish
+        if (
+            user_id not in telegram_accounts
+            or "phone_code_hash" not in telegram_accounts[user_id]
+        ):
+            await update.message.reply_text(
+                "❌ Avval telefon raqamingizni kiriting!",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
+                ),
+            )
+            return
+
+        client = telegram_accounts[user_id]["client"]
+        phone = telegram_accounts[user_id]["phone"]
+        phone_code_hash = telegram_accounts[user_id]["phone_code_hash"]
+
+        try:
+            # Kod bilan kirish
+            await client.sign_in(
+                phone_number=phone,
+                phone_code_hash=phone_code_hash,
+                phone_code=clean_code,
+            )
+
+            # Muvaffaqiyatli ulanish
+            session_string = await client.export_session_string()
+            telegram_accounts[user_id]["session"] = session_string
+            telegram_accounts[user_id]["connected_at"] = datetime.now()
+            save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
+
+            await update.message.reply_text(
+                "✅ Muvaffaqiyatli ulandi! Endi siz botning barcha funksiyalaridan foydalanishingiz mumkin.",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        InlineKeyboardButton(
+                            "🏠 Bosh menyu", callback_data="back_to_start"
+                        )
+                    ]
+                ),
+            )
+
+        except SessionPasswordNeeded:
+            telegram_accounts[user_id]["state"] = "waiting_password"
+            await update.message.reply_text(
+                "🔒 Hisobingizda 2-qadam autentifikatsiya yoqilgan. Iltimos, parolingizni kiriting:",
+                reply_markup=InlineKeyboardMarkup(
+                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
+                ),
+            )
+
+        except PhoneCodeInvalid:
+            await update.message.reply_text(
+                "❌ Noto'g'ri tasdiqlash kodi! Iltimos, yangi kod so'rang va qayta urinib ko'ring.",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        InlineKeyboardButton(
+                            "🔄 Yangi kod so'rash", callback_data="resend_code"
+                        )
+                    ],
+                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
+                ),
+            )
+
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ Xatolik yuz berdi: {str(e)}",
+                reply_markup=InlineKeyboardMarkup(
+                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
+                ),
+            )
 
     except Exception as e:
-        logger.error(f"Folder creation error: {str(e)}")
+        logger.error(f"Tasdiqlash kodini qayta ishlashda xato: {str(e)}")
+        await update.message.reply_text(
+            "❌ Tizim xatosi. Iltimos, keyinroq qayta urinib ko'ring.",
+            reply_markup=InlineKeyboardMarkup(
+                [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
+            ),
+        )
+
+
+async def resend_code_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    if user_id not in telegram_accounts or "phone" not in telegram_accounts[user_id]:
         await query.edit_message_text(
-            f"❌ Xato: {str(e)}\nIltimos, keyinroq qayta urinib ko'ring.",
+            "❌ Avval telefon raqamingizni kiriting!",
+            reply_markup=InlineKeyboardMarkup(
+                [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
+            ),
+        )
+        return
+
+    try:
+        client = PyrogramClient(
+            name=f"user_{user_id}",
+            api_id=API_ID,
+            api_hash=API_HASH,
+            in_memory=True,
+        )
+        await client.connect()
+
+        phone = telegram_accounts[user_id]["phone"]
+        sent_code = await client.send_code(phone)
+
+        telegram_accounts[user_id]["phone_code_hash"] = sent_code.phone_code_hash
+        telegram_accounts[user_id]["client"] = client
+        save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
+
+        await query.edit_message_text(
+            "✅ Yangi tasdiqlash kodi yuborildi! Iltimos, Telegramdan kelgan 5 xonali kodni kiriting.",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    InlineKeyboardButton(
+                        "🔄 Qayta yuborish", callback_data="resend_code"
+                    )
+                ],
+                [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
+            ),
+        )
+
+    except Exception as e:
+        logger.error(f"Kodni qayta yuborishda xato: {str(e)}")
+        await query.edit_message_text(
+            "❌ Kod yuborishda xatolik yuz berdi. Iltimos, keyinroq qayta urinib ko'ring.",
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
             ),
         )
 
 
-async def add_group_to_folder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Add a group to the auto folder"""
-    user_id = update.effective_user.id
-    text = update.message.text.strip()
-
+async def process_2fa_password(update, context, user_id, password):
+    """2FA parolini qayta ishlash"""
     try:
-        # Extract group info from message
-        if text.startswith("https://t.me/"):
-            username = text.split("/")[-1]
-        elif text.startswith("@"):
-            username = text[1:]
-        else:
-            raise ValueError("Noto'g'ri havola formati")
+        if user_id not in user_data or "client" not in user_data[user_id]:
+            raise ValueError("Telegram ulanish jarayoni topilmadi")
 
-        # Connect to user's Telegram account
-        client = TelegramClient(
-            StringSession(telegram_accounts[user_id]["session"]),
-            telegram_accounts[user_id]["api_id"],
-            telegram_accounts[user_id]["api_hash"],
-        )
-        await client.connect()
+        client = user_data[user_id]["client"]
 
-        # Get the group/channel entity
-        entity = await client.get_entity(username)
+        # Parol bilan kirish
+        await client.check_password(password=password)
 
-        # Add to folder
-        if user_id not in auto_folders:
-            await update.message.reply_text(
-                "❌ Avval 'Auto' listini yaratishingiz kerak!"
-            )
-            return
+        # Muvaffaqiyatli ulanish
+        session_string = await client.export_session_string()
+        telegram_accounts[user_id]["session"] = session_string
+        telegram_accounts[user_id]["connected_at"] = datetime.now()
+        save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
 
-        # Add group to folder in user's account
-        await client(
-            functions.messages.AddChatUserRequest(
-                chat_id=auto_folders[user_id]["folder_id"],
-                user_id=entity.id,
-                fwd_limit=100,
-            )
-        )
-
-        # Save to our database
-        if entity.id not in auto_folders[user_id]["groups"]:
-            auto_folders[user_id]["groups"].append(entity.id)
-            save_data(AUTO_FOLDERS_FILE, auto_folders)
+        await client.disconnect()
+        if user_id in user_data:
+            del user_data[user_id]
 
         await update.message.reply_text(
-            f"✅ {entity.title} guruhi 'Auto' listiga qo'shildi!",
+            "✅ Muvaffaqiyatli ulandi!",
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🏠 Bosh menyu", callback_data="back_to_start")]]
+                [
+                    [
+                        InlineKeyboardButton(
+                            "🏠 Asosiy menyu", callback_data="back_to_start"
+                        )
+                    ]
+                ]
             ),
         )
 
-        await client.disconnect()
-
     except Exception as e:
-        logger.error(f"Add group error: {str(e)}")
+        logger.error(f"2FA xatosi: {str(e)}")
         await update.message.reply_text(
             f"❌ Xato: {str(e)}\nIltimos, qayta urinib ko'ring.",
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
             ),
         )
+        # Xato bo'lganda tozalash
+        if user_id in user_data and "client" in user_data[user_id]:
+            try:
+                await user_data[user_id]["client"].disconnect()
+            except:
+                pass
+            del user_data[user_id]
+
+
+async def disconnect_telegram_account(query, user_id):
+    """Telegram hisobini uzish"""
+    try:
+        if user_id not in telegram_accounts or not telegram_accounts[user_id].get(
+            "session"
+        ):
+            await query.edit_message_text(
+                "ℹ️ Sizda ulangan Telegram hisobi yo'q",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
+                ),
+            )
+            return
+
+        # Client mavjud bo'lsa uzish
+        if "client" in telegram_accounts[user_id]:
+            try:
+                await telegram_accounts[user_id]["client"].disconnect()
+            except:
+                pass
+
+        # Sessionni tozalash, lekin API ma'lumotlarini saqlab qolish
+        telegram_accounts[user_id].pop("session", None)
+        telegram_accounts[user_id].pop("client", None)
+        telegram_accounts[user_id].pop("phone_code_hash", None)
+        save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
+
+        await query.edit_message_text(
+            "✅ Telegram hisobi muvaffaqiyatli uzildi",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "🏠 Asosiy menyu", callback_data="back_to_start"
+                        )
+                    ]
+                ]
+            ),
+        )
+    except Exception as e:
+        logger.error(f"Uzish xatosi: {str(e)}")
+        await query.edit_message_text(
+            "❌ Xato yuz berdi. Iltimos, qayta urinib ko'ring.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
+            ),
+        )
+
+
+async def show_telegram_account_info(query, user_id):
+    """Ulangan Telegram hisobi haqida ma'lumot ko'rsatish"""
+    try:
+        if user_id not in telegram_accounts or not telegram_accounts[user_id].get(
+            "session"
+        ):
+            keyboard = [
+                [InlineKeyboardButton("📲 Ulash", callback_data="connect_account")],
+                [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
+            ]
+            await query.edit_message_text(
+                "❌ Sizda ulangan Telegram hisobi yo'q",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+            return
+
+        account = telegram_accounts[user_id]
+        connected_at = account.get("connected_at", datetime.now())
+        if isinstance(connected_at, str):
+            connected_at = datetime.fromisoformat(connected_at)
+
+        keyboard = [
+            [InlineKeyboardButton("❌ Uzish", callback_data="disconnect_account")],
+            [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
+        ]
+
+        message = "📲 Ulangan Telegram Hisobi:\n\n"
+        message += f"📞 Telefon: {account.get('phone', 'Noma\'lum')}\n"
+        message += f"🕒 Ulangan vaqt: {connected_at.strftime('%Y-%m-%d %H:%M')}\n"
+
+        if account.get("api_id"):
+            message += "\n✅ API ma'lumotlari mavjud\n"
+
+        await query.edit_message_text(
+            message, reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except Exception as e:
+        logger.error(f"Hisob ma'lumoti xatosi: {str(e)}")
+        await query.edit_message_text(
+            "❌ Xato yuz berdi. Iltimos, qayta urinib ko'ring.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
+            ),
+        )
+
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+    state = user_data.get(user_id, {}).get("state")
+
+    try:
+        if state == "waiting_api_id":
+            try:
+                api_id = int(text)
+                telegram_accounts[user_id] = {"api_id": api_id}
+                user_data[user_id] = {"state": "waiting_api_hash"}
+                await update.message.reply_text(
+                    "✅ API id qabul qilindi !\n\nEndi <b>API_HASH</b> ni kiriting:",
+                    parse_mode="HTML",
+                )
+            except ValueError:
+                await update.message.reply_text("❌ API_ID must be numbers only!")
+
+        elif state == "waiting_api_hash":
+            telegram_accounts[user_id]["api_hash"] = text
+            save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
+            user_data[user_id] = {"state": "waiting_phone_number"}
+            await update.message.reply_text(
+                "✅ API malumotlari saqlandi!\n\n"
+                "endi telefon raqamingizni kiriting:\n"
+                "Misol uchun: <code>+1234567890</code>",
+                parse_mode="HTML",
+            )
+
+        elif state == "waiting_phone_number":
+            if not re.match(r"^\+[0-9]{10,14}$", text):
+                await update.message.reply_text("❌ Invalid phone number format!")
+                return
+
+            telegram_accounts[user_id]["phone"] = text
+            save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
+
+            client = PyrogramClient(
+                name=f"user_{user_id}",
+                api_id=telegram_accounts[user_id]["api_id"],
+                api_hash=telegram_accounts[user_id]["api_hash"],
+                in_memory=True,
+            )
+            await client.connect()
+
+            sent_code = await client.send_code(text)
+            user_data[user_id] = {
+                "state": "waiting_verification_code",
+                "client": client,
+                "phone_code_hash": sent_code.phone_code_hash,
+            }
+
+            await update.message.reply_text(
+                "✅ Verfikatsiya kodi yuborildi!\n\n"
+                "Telegramdan kelgan 5 xonali raqamni kirgizing. 12345 qilib emas 12_345 qilib kiriting\n\n"
+                "agar kod kelmagan bo'lsa qayta yuborish tugmasini bosing:",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "🔄 Qayta yuborish", callback_data="resend_code"
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "🔙 Qaytish", callback_data="back_to_start"
+                            )
+                        ],
+                    ]
+                ),
+            )
+
+        elif state == "waiting_verification_code":
+            client = user_data[user_id]["client"]
+            try:
+                await client.sign_in(
+                    phone_number=telegram_accounts[user_id]["phone"],
+                    phone_code_hash=user_data[user_id]["phone_code_hash"],
+                    phone_code=text,
+                )
+
+                session_string = await client.export_session_string()
+                telegram_accounts[user_id]["session"] = session_string
+                save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
+
+                await update.message.reply_text(
+                    "✅ Telegram account connected!",
+                    reply_markup=InlineKeyboardMarkup(
+                        [
+                            [
+                                InlineKeyboardButton(
+                                    "🏠 Main Menu", callback_data="back_to_start"
+                                )
+                            ]
+                        ]
+                    ),
+                )
+
+            except SessionPasswordNeeded:
+                user_data[user_id]["state"] = "waiting_password"
+                await update.message.reply_text("🔒 Please enter your 2FA password:")
+
+            except Exception as e:
+                await update.message.reply_text(f"❌ Error: {str(e)}")
+
+        elif state == "waiting_password":
+            client = user_data[user_id]["client"]
+            try:
+                await client.check_password(password=text)
+                session_string = await client.export_session_string()
+                telegram_accounts[user_id]["session"] = session_string
+                save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
+
+                await update.message.reply_text(
+                    "✅ Successfully connected!",
+                    reply_markup=InlineKeyboardMarkup(
+                        [
+                            [
+                                InlineKeyboardButton(
+                                    "🏠 Main Menu", callback_data="back_to_start"
+                                )
+                            ]
+                        ]
+                    ),
+                )
+            except Exception as e:
+                await update.message.reply_text(f"❌ Error: {str(e)}")
+
+        elif state == "waiting_group_link":
+            await process_group_link(update, context, user_id, text)
+
+        elif state == "waiting_key_activation":
+            await process_key_activation(update, context)
+
+        elif state == "waiting_message":
+            await process_message_text(update, context, user_id, text)
+
+        elif state == "waiting_interval":
+            try:
+                interval = int(text)
+                if interval < 1:
+                    raise ValueError("Interval 1 daqiqadan kam bo'lishi mumkin emas")
+
+                query = update.callback_query or update.message
+                await apply_message_interval(query, context, user_id, interval)
+
+            except ValueError:
+                await update.message.reply_text(
+                    "❌ Noto'g'ri interval! Faqat raqam kiriting (masalan: 15)",
+                    reply_markup=InlineKeyboardMarkup(
+                        [
+                            [
+                                InlineKeyboardButton(
+                                    "🔙 Orqaga", callback_data="set_interval"
+                                )
+                            ]
+                        ]
+                    ),
+                )
+
+    except Exception as e:
+        logger.error(f"Error: {str(e)}")
+        await update.message.reply_text(
+            "❌ System error. Please try again.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_start")]]
+            ),
+        )
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Yordam menyusini ko'rsatish"""
+    help_text = """
+🤖 <b>Botdan foydalanish bo'yicha qo'llanma</b>
+
+<b>Asosiy buyruqlar:</b>
+/start - Botni ishga tushirish
+/premium - Premium holatini tekshirish
+/help - Yordam olish
+
+<b>Premium funksiyalar:</b>
+➕ Guruh qo'shish
+📋 Guruhlarni ko'rish
+📲 Telegram hisobini ulash
+📂 Avto-papka yaratish
+✉️ Xabar yuborish
+⚙️ Intervalni sozlash
+
+<b>Admin buyruqlari:</b>
+/admin - Admin paneli
+/testkey - Test kalit yaratish (faqat admin)
+"""
+    await update.message.reply_text(help_text, parse_mode="HTML")
 
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Barcha callback querylarni boshqaruvchi funksiya"""
+    """Barcha callback so'rovlarni boshqarish"""
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -1916,7 +1982,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Admin paneli bilan bog'liq tugmalar
         if data == "admin_panel":
             if not await is_admin(user_id):
-                await query.edit_message_text("❌ Faqat admin uchun!")
+                await query.edit_message_text("❌ Faqat adminlar uchun!")
                 return
 
             keyboard = [
@@ -1933,25 +1999,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ],
                 [
                     InlineKeyboardButton(
-                        "📨 Aktiv so'rovlar", callback_data="pending_requests"
+                        "📨 Kutilayotgan so'rovlar", callback_data="pending_requests"
                     )
                 ],
                 [InlineKeyboardButton("🏠 Bosh menyu", callback_data="back_to_start")],
             ]
             await query.edit_message_text(
-                "🛠 Admin paneli:\n\nQuyidagi tugmalardan birini tanlang:",
+                "🛠 Admin paneli:\n\nIltimos, amalni tanlang:",
                 reply_markup=InlineKeyboardMarkup(keyboard),
             )
             return
-
+        elif data == "resend_code":
+            await resend_code_handler(update, context)
+            return
         elif data == "connect_account":
             if user_id not in telegram_accounts or not telegram_accounts[user_id].get(
                 "api_id"
             ):
                 user_data[user_id] = {"state": "waiting_api_id"}
                 await query.edit_message_text(
-                    "📋 Iltimos, Telegram API ID ni yuboring:\n\n"
-                    "API ID ni olish uchun my.telegram.org saytiga kiring",
+                    "📋 Iltimos, API_ID ni kiriting:\n\n"
+                    "API ID va API HASH ni olish uchun quyidagi videoni ko'ring:\n"
+                    "👉 https://www.youtube.com/watch?v=8naENmP3rg4\n\n"
+                    "Keyin API_ID ni kiriting:",
                     reply_markup=InlineKeyboardMarkup(
                         [
                             [
@@ -1968,33 +2038,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await show_telegram_account_info(query, user_id)
             return
 
-        elif data.startswith("interval_"):
-            try:
-                interval = int(data.split("_")[1])
-                user_data[user_id]["interval"] = interval
+        elif data == "create_auto_folder":
+            await create_auto_folder(query, user_id)
+            return
 
-                # Avvalgi jobni to'xtatamiz
-                current_jobs = context.job_queue.get_jobs_by_name(f"user_{user_id}")
-                for job in current_jobs:
-                    job.schedule_removal()
-
-                # Yangi jobni yaratamiz
-                context.job_queue.run_repeating(
-                    send_periodic_messages,
-                    interval=interval * 60,
-                    first=0,  # Darhol boshlash
-                    data={"user_id": user_id, "message": user_data[user_id]["message"]},
-                    name=f"user_{user_id}",
-                )
-
+        elif data == "send_message":
+            if not await is_premium(user_id):
                 await query.edit_message_text(
-                    f"✅ Xabarlar har {interval} daqiqada jo'natiladi!\n\n"
-                    f"Xabar matni:\n{user_data[user_id]['message'][:200]}...",
+                    "🔒 Bu funksiya faqat premium foydalanuvchilar uchun",
                     reply_markup=InlineKeyboardMarkup(
                         [
                             [
                                 InlineKeyboardButton(
-                                    "🛑 To'xtatish", callback_data="stop_messages"
+                                    "🆙 Premium so'rov", callback_data="request_premium"
                                 )
                             ],
                             [
@@ -2005,149 +2061,52 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         ]
                     ),
                 )
+                return
+
+            await prepare_to_send_message(query, user_id)
+            return
+
+        elif data.startswith("interval_"):
+            try:
+                interval = int(data.split("_")[1])
+                await apply_message_interval(query, context, user_id, interval)
             except Exception as e:
-                logger.error(f"Interval error: {str(e)}")
+                logger.error(f"Interval tanlashda xatolik: {e}")
                 await query.edit_message_text(
-                    f"❌ Xato: {str(e)}\nIltimos, qayta urinib ko'ring.",
+                    "❌ Xatolik yuz berdi. Iltimos, qaytadan urinib ko'ring.",
                     reply_markup=InlineKeyboardMarkup(
                         [
                             [
                                 InlineKeyboardButton(
-                                    "🔙 Bosh menyu", callback_data="back_to_start"
+                                    "🔙 Orqaga", callback_data="back_to_start"
                                 )
                             ]
                         ]
                     ),
                 )
-
-        elif data == "create_auto_folder":
-            await create_auto_folder(query, user_id)
             return
-        elif data == "start_messages":
-            if not await is_premium(user_id):
-                await query.edit_message_text(
-                    "❌ Bu funksiya faqat premium foydalanuvchilar uchun!"
-                )
-                return
-
-            if user_id not in user_data or "message" not in user_data[user_id]:
-                await query.edit_message_text("❌ Avval xabar matnini yuboring!")
-                return
-
-            # Interval sozlamalari
-            keyboard = [
-                [InlineKeyboardButton("1 daqiqa", callback_data="set_interval_1")],
-                [InlineKeyboardButton("5 daqiqa", callback_data="set_interval_5")],
-                [InlineKeyboardButton("15 daqiqa", callback_data="set_interval_15")],
-                [InlineKeyboardButton("30 daqiqa", callback_data="set_interval_30")],
-                [InlineKeyboardButton("60 daqiqa", callback_data="set_interval_60")],
-                [
-                    InlineKeyboardButton(
-                        "✏️ Maxsus interval", callback_data="custom_interval"
-                    )
-                ],
-                [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
-            ]
-
-            await query.edit_message_text(
-                "⏳ Xabarlarni qayta jo'natish intervalini tanlang:",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-            )
-            return
-
-        elif data.startswith("set_interval_"):
-            try:
-                interval = int(data.split("_")[2])  # set_interval_5 -> 5
-                user_data[user_id]["interval"] = interval
-
-                # Avvalgi jobni to'xtatamiz
-                current_jobs = context.job_queue.get_jobs_by_name(f"user_{user_id}")
-                for job in current_jobs:
-                    job.schedule_removal()
-
-                # Yangi jobni yaratamiz
-                context.job_queue.run_repeating(
-                    callback=send_periodic_messages,
-                    interval=interval * 60,  # daqiqalarni sekundga o'tkazamiz
-                    first=5,  # 5 sekunddan keyin birinchi xabar
-                    data={"user_id": user_id},
-                    name=f"user_{user_id}",
-                )
-
-                await query.edit_message_text(
-                    f"✅ Xabarlar har {interval} daqiqada jo'natiladi!\n\n"
-                    f"Xabar matni:\n{user_data[user_id]['message'][:200]}...",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🛑 To'xtatish", callback_data="stop_messages"
-                                )
-                            ],
-                            [
-                                InlineKeyboardButton(
-                                    "✏️ Intervalni o'zgartirish",
-                                    callback_data="start_messages",
-                                )
-                            ],
-                        ]
-                    ),
-                )
-            except Exception as e:
-                logger.error(f"Interval sozlashda xato: {e}")
-                await query.edit_message_text(f"❌ Xato: {e}")
 
         elif data == "custom_interval":
-            user_data[user_id]["state"] = "waiting_custom_interval"
+            user_data[user_id] = {"state": "waiting_interval"}
             await query.edit_message_text(
-                "⏳ Intervalni daqiqalarda kiriting (masalan: 45):",
+                "Intervalni daqiqalarda kiriting (masalan: 15):",
                 reply_markup=InlineKeyboardMarkup(
-                    [
-                        [
-                            InlineKeyboardButton(
-                                "🔙 Orqaga", callback_data="start_messages"
-                            )
-                        ]
-                    ]
+                    [[InlineKeyboardButton("🔙 Orqaga", callback_data="set_interval")]]
                 ),
             )
             return
 
         elif data == "stop_messages":
-            # Barcha jo'natishlarni to'xtatamiz
-            current_jobs = context.job_queue.get_jobs_by_name(f"user_{user_id}")
-            for job in current_jobs:
-                job.schedule_removal()
-
-            await query.edit_message_text(
-                "🛑 Xabar jo'natish to'xtatildi!",
-                reply_markup=InlineKeyboardMarkup(
-                    [
-                        [
-                            InlineKeyboardButton(
-                                "🔄 Qayta boshlash", callback_data="start_messages"
-                            )
-                        ],
-                        [
-                            InlineKeyboardButton(
-                                "🔙 Bosh menyu", callback_data="back_to_start"
-                            )
-                        ],
-                    ]
-                ),
-            )
+            await stop_scheduled_messages(query, context, user_id)
             return
+
         elif data == "disconnect_account":
             await disconnect_telegram_account(query, user_id)
             return
 
-        elif data == "account_info":
-            await show_telegram_account_info(query, user_id)
-            return
-
         elif data == "generate_key":
             if not await is_admin(user_id):
-                await query.edit_message_text("❌ Faqat admin uchun!")
+                await query.edit_message_text("❌ Faqat adminlar kalit yarata oladi!")
                 return
 
             keyboard = [
@@ -2158,14 +2117,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("🔙 Orqaga", callback_data="admin_panel")],
             ]
             await query.edit_message_text(
-                "🔑 Premium kalit yaratish:\n\nKalit amal qilish muddatini tanlang:",
+                "🔑 Kalit yaratish:\n\nDavomiyligini tanlang:",
                 reply_markup=InlineKeyboardMarkup(keyboard),
             )
             return
 
         elif data.startswith("genkey_"):
             if not await is_admin(user_id):
-                await query.answer("❌ Faqat admin uchun!", show_alert=True)
+                await query.answer("❌ Faqat adminlar uchun!", show_alert=True)
                 return
 
             try:
@@ -2182,11 +2141,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 save_data(GENERATED_KEYS_FILE, generated_keys)
 
                 await query.edit_message_text(
-                    f"✅ Yangi premium kalit yaratildi:\n\n"
+                    f"✅ Premium kalit yaratildi:\n\n"
                     f"🔑 Kalit: <code>{key}</code>\n"
                     f"📅 Tugash sanasi: {expiry_date.strftime('%Y-%m-%d')}\n"
-                    f"⏳ Davomiylik: {days} kun\n\n"
-                    "Foydalanuvchiga shu kalitni yuboring.",
+                    f"⏳ Davomiyligi: {days} kun\n\n"
+                    "Bu kalitni foydalanuvchiga yuboring.",
                     parse_mode="HTML",
                     reply_markup=InlineKeyboardMarkup(
                         [
@@ -2201,9 +2160,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             except Exception as e:
-                logger.error(f"Key generation error: {str(e)}")
+                logger.error(f"Kalit yaratishda xatolik: {str(e)}")
                 await query.edit_message_text(
-                    f"❌ Xato: {str(e)}\n\nIltimos, qayta urinib ko'ring.",
+                    f"❌ Xatolik: {str(e)}\n\nIltimos, qaytadan urinib ko'ring.",
                     reply_markup=InlineKeyboardMarkup(
                         [
                             [
@@ -2218,7 +2177,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data == "premium_users_list":
             if not await is_admin(user_id):
-                await query.edit_message_text("❌ Faqat admin uchun!")
+                await query.edit_message_text("❌ Faqat adminlar uchun!")
                 return
 
             if not premium_users:
@@ -2239,7 +2198,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 expiry = data["expiry"].strftime("%Y-%m-%d")
                 message += f"👤 {username} (ID: {uid})\n"
-                message += f"📅 Tugashi: {expiry}\n"
+                message += f"📅 Tugash sanasi: {expiry}\n"
                 message += f"⏳ Davomiylik: {data['days']} kun\n\n"
 
             await query.edit_message_text(
@@ -2258,12 +2217,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data == "pending_requests":
             if not await is_admin(user_id):
-                await query.edit_message_text("❌ Faqat admin uchun!")
+                await query.edit_message_text("❌ Faqat adminlar uchun!")
                 return
 
             if not pending_requests:
                 await query.edit_message_text(
-                    "ℹ️ Hozircha yangi so'rovlar mavjud emas.",
+                    "ℹ️ Kutilayotgan so'rovlar yo'q",
                     reply_markup=InlineKeyboardMarkup(
                         [
                             [
@@ -2276,14 +2235,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
 
-            message = "📨 Kutilayotgan premium so'rovlari:\n\n"
+            message = "📨 Kutilayotgan premium so'rovlar:\n\n"
             buttons = []
             for req_user_id, request in pending_requests.items():
                 message += f"👤 @{request['username']} (ID: {req_user_id})\n"
                 buttons.append(
                     [
                         InlineKeyboardButton(
-                            f"✅ {request['username']} ni tasdiqlash",
+                            f"✅ Tasdiqlash {request['username']}",
                             callback_data=f"approve_{req_user_id}",
                         )
                     ]
@@ -2299,7 +2258,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data.startswith("approve_"):
             if not await is_admin(user_id):
-                await query.edit_message_text("❌ Faqat admin uchun!")
+                await query.edit_message_text("❌ Faqat adminlar uchun!")
                 return
 
             user_id_to_approve = int(data.split("_")[1])
@@ -2334,13 +2293,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=f"🎉 Sizning premium so'rovingiz tasdiqlandi!\n\n"
                 f"🔑 Sizning premium kalitingiz: <code>{key}</code>\n"
                 f"📅 Tugash sanasi: {expiry_date.strftime('%Y-%m-%d')}\n\n"
-                f"Endi siz barcha bot funksiyalaridan foydalanishingiz mumkin!",
+                f"Endi siz botning barcha funksiyalaridan foydalanishingiz mumkin!",
                 parse_mode="HTML",
             )
 
             await query.edit_message_text(
-                f"✅ @{user_info['username']} foydalanuvchiga premium berildi!\n"
-                f"Kalit: {key}",
+                f"✅ @{user_info['username']} premiumga tasdiqlandi!\n" f"Kalit: {key}",
                 reply_markup=InlineKeyboardMarkup(
                     [
                         [
@@ -2397,16 +2355,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if ADMIN_ID:
                 await context.bot.send_message(
                     chat_id=ADMIN_ID,
-                    text=f"⚠️ Yangi premium so'rovi:\n\n"
-                    f"User: @{query.from_user.username}\n"
+                    text=f"⚠️ Yangi premium so'rov:\n\n"
+                    f"Foydalanuvchi: @{query.from_user.username}\n"
                     f"ID: {user_id}\n\n"
                     f"Tasdiqlash: /approve_{user_id}",
                 )
 
             await query.edit_message_text(
-                "✅ Premium so'rovingiz qabul qilindi!\n\n"
+                "✅ Sizning premium so'rovingiz qabul qilindi!\n\n"
                 f"Admin: @{ADMIN_USERNAME}\n"
-                "Tasdiqlashni kuting...",
+                "Tasdiqlanishini kuting...",
                 reply_markup=InlineKeyboardMarkup(
                     [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
                 ),
@@ -2432,8 +2390,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             await query.edit_message_text(
-                "🔑 Premium kalitni kiriting:\n\n"
-                "Namuna: PREMIUM-ABC123DEF456\n\n"
+                "🔑 Premium kalitingizni kiriting:\n\n"
+                "Masalan: PREMIUM-ABC123DEF456\n\n"
                 "Agar kalitingiz bo'lmasa, admin bilan bog'laning: "
                 f"@{ADMIN_USERNAME}",
                 reply_markup=InlineKeyboardMarkup(
@@ -2478,342 +2436,31 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
 
                 await query.edit_message_text(
-                    "❌ Sizda faol premium obuna yo'q",
+                    "❌ Sizda faol premium obuna mavjud emas",
                     reply_markup=InlineKeyboardMarkup(buttons),
                 )
             return
 
-        # Guruhlar bilan ishlash tugmalari
+        # Guruh bilan bog'liq tugmalar
         elif data == "add_group":
-            if not await is_premium(user_id):
-                await query.edit_message_text(
-                    "🔒 Bu funksiya faqat premium foydalanuvchilar uchun",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🆙 Premium so'rov", callback_data="request_premium"
-                                )
-                            ],
-                            [
-                                InlineKeyboardButton(
-                                    "🔙 Orqaga", callback_data="back_to_start"
-                                )
-                            ],
-                        ]
-                    ),
-                )
-                return
-
-            await query.edit_message_text(
-                "➕ Guruh qo'shish:\n\n"
-                "Guruh havolasini yuboring:\n"
-                "Masalan: https://t.me/guruhnomi yoki @guruhnomi\n\n"
-                "Eslatma: Bot guruhda admin bo'lishi kerak!",
-                reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
-                ),
-            )
-            user_data[user_id] = {"state": "waiting_group_link"}
+            await add_new_group(query, user_id)
             return
 
         elif data == "list_groups":
-            if not user_groups.get(user_id):
-                keyboard = [
-                    [
-                        InlineKeyboardButton(
-                            "➕ Guruh qo'shish", callback_data="add_group"
-                        )
-                    ],
-                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
-                ]
-
-                await query.edit_message_text(
-                    "❌ Sizda hech qanday guruh yo'q",
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                )
-                return
-
-            message = "📋 Sizning guruhlaringiz:\n\n"
-            for idx, (chat_id, group) in enumerate(user_groups[user_id].items(), 1):
-                message += f"{idx}. {group['title']}\n👉 {group['link']}\n\n"
-
-            keyboard = [
-                [InlineKeyboardButton("➕ Guruh qo'shish", callback_data="add_group")],
-                [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
-            ]
-
-            await query.edit_message_text(
-                message, reply_markup=InlineKeyboardMarkup(keyboard)
-            )
+            await list_user_groups(query, user_id)
             return
 
         elif data == "confirm_add":
-            group_data = user_data.get(user_id, {}).get("temp_group")
-            if not group_data:
-                await query.edit_message_text("❌ Guruh ma'lumotlari topilmadi")
-                return
-
-            if group_data["id"] in user_groups.get(user_id, {}):
-                keyboard = [
-                    [
-                        InlineKeyboardButton(
-                            "➕ Guruh qo'shish", callback_data="add_group"
-                        )
-                    ],
-                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
-                ]
-
-                await query.edit_message_text(
-                    "⚠️ Bu guruh allaqachon qo'shilgan",
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                )
-            else:
-                if user_id not in user_groups:
-                    user_groups[user_id] = {}
-
-                user_groups[user_id][group_data["id"]] = {
-                    "title": group_data["title"],
-                    "link": group_data["link"],
-                }
-                save_data(USER_GROUPS_FILE, user_groups)
-
-                keyboard = [
-                    [
-                        InlineKeyboardButton(
-                            "➕ Guruh qo'shish", callback_data="add_group"
-                        )
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            "📋 Guruhlarim", callback_data="list_groups"
-                        )
-                    ],
-                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
-                ]
-
-                await query.edit_message_text(
-                    f"✅ {group_data['title']} guruhiga qo'shildi",
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                )
-
-            if user_id in user_data and "temp_group" in user_data[user_id]:
-                del user_data[user_id]["temp_group"]
+            await confirm_group_addition(query, context, user_id)
             return
 
         elif data == "cancel_add":
-            if user_id in user_data and "temp_group" in user_data[user_id]:
-                del user_data[user_id]["temp_group"]
-
-            keyboard = [
-                [InlineKeyboardButton("➕ Guruh qo'shish", callback_data="add_group")],
-                [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
-            ]
-
-            await query.edit_message_text(
-                "❌ Guruh qo'shish bekor qilindi",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-            )
+            await cancel_group_addition(query, user_id)
             return
-
-        # elif data == "create_auto_folder":
-        #     if not await is_premium(user_id):
-        #         await query.edit_message_text(
-        #             "🔒 Bu funksiya faqat premium foydalanuvchilar uchun",
-        #             reply_markup=InlineKeyboardMarkup(
-        #                 [
-        #                     [
-        #                         InlineKeyboardButton(
-        #                             "🆙 Premium so'rov", callback_data="request_premium"
-        #                         )
-        #                     ],
-        #                     [
-        #                         InlineKeyboardButton(
-        #                             "🔙 Orqaga", callback_data="back_to_start"
-        #                         )
-        #                     ],
-        #                 ]
-        #             ),
-        #         )
-        #         return
-
-        #     if not user_groups.get(user_id):
-        #         keyboard = [
-        #             [
-        #                 InlineKeyboardButton(
-        #                     "➕ Guruh qo'shish", callback_data="add_group"
-        #                 )
-        #             ],
-        #             [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
-        #         ]
-
-        #         await query.edit_message_text(
-        #             "❌ Avto-folder yaratish uchun avval guruh qo'shing",
-        #             reply_markup=InlineKeyboardMarkup(keyboard),
-        #         )
-        #         return
-
-        #     if user_id in auto_folders:
-        #         await query.edit_message_text(
-        #             "ℹ️ Sizda allaqachon avto-folder mavjud",
-        #             reply_markup=InlineKeyboardMarkup(
-        #                 [
-        #                     [
-        #                         InlineKeyboardButton(
-        #                             "🔙 Orqaga", callback_data="back_to_start"
-        #                         )
-        #                     ]
-        #                 ]
-        #             ),
-        #         )
-        #         return
-
-        #     auto_folders[user_id] = {
-        #         "folder_name": "Auto-Folder",
-        #         "groups": list(user_groups[user_id].keys()),
-        #     }
-        #     save_data(AUTO_FOLDERS_FILE, auto_folders)
-
-        #     await query.edit_message_text(
-        #         "✅ Avto-folder muvaffaqiyatli yaratildi!\n\n"
-        #         "Bu folder ichidagi barcha guruhlarga xabarlarni bir vaqtda yuborishingiz mumkin.",
-        #         reply_markup=InlineKeyboardMarkup(
-        #             [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
-        #         ),
-        #     )
-        #     return
-
-        # Xabar yuborish bilan bog'liq tugmalar
-        elif data == "send_message":
-            if not await is_premium(user_id):
-                await query.edit_message_text(
-                    "🔒 Bu funksiya faqat premium foydalanuvchilar uchun",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🆙 Premium so'rov", callback_data="request_premium"
-                                )
-                            ],
-                            [
-                                InlineKeyboardButton(
-                                    "🔙 Orqaga", callback_data="back_to_start"
-                                )
-                            ],
-                        ]
-                    ),
-                )
-                return
-
-            if not user_groups.get(user_id) and not auto_folders.get(user_id):
-                keyboard = [
-                    [
-                        InlineKeyboardButton(
-                            "➕ Guruh qo'shish", callback_data="add_group"
-                        )
-                    ],
-                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
-                ]
-
-                await query.edit_message_text(
-                    "❌ Iltimos, avval guruh yoki avto-folder qo'shing",
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                )
-                return
-
-            user_data[user_id] = {"state": "waiting_message"}
-            await query.edit_message_text(
-                "Xabar matnini yuboring:",
-                reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
-                ),
-            )
+        elif data == "start":
+            await start(update, context)
             return
-
-        elif data.startswith("interval_"):
-            try:
-                interval = int(data.split("_")[1])
-                user_data[user_id]["interval"] = interval
-
-                # Avvalgi joblarni to'xtatamiz
-                if user_id in context.job_queue.jobs():
-                    for job in context.job_queue.get_jobs_by_name(f"user_{user_id}"):
-                        job.schedule_removal()
-
-                # Yangi jobni qo'shamiz
-                context.job_queue.run_repeating(
-                    send_periodic_messages,
-                    interval=interval * 60,
-                    first=10,
-                    chat_id=user_id,
-                    data={"user_id": user_id},
-                    name=f"user_{user_id}",
-                )
-
-                await query.edit_message_text(
-                    f"✅ Xabarlar har {interval} daqiqada jo'natiladi!\n\n"
-                    f"Xabar matni: {user_data[user_id]['message'][:200]}...",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🛑 To'xtatish", callback_data="stop_messages"
-                                )
-                            ],
-                            [
-                                InlineKeyboardButton(
-                                    "🔙 Orqaga", callback_data="back_to_start"
-                                )
-                            ],
-                        ]
-                    ),
-                )
-            except Exception as e:
-                logger.error(f"Interval error: {str(e)}")
-                await query.edit_message_text(
-                    f"❌ Xato: {str(e)}\nIltimos, qayta urinib ko'ring.",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🔙 Bosh menyu", callback_data="back_to_start"
-                                )
-                            ]
-                        ]
-                    ),
-                )
-            return
-
-        elif data == "custom_interval":
-            user_data[user_id]["state"] = "waiting_interval"
-            await query.edit_message_text(
-                "Intervalni daqiqalarda kiriting (masalan: 15):",
-                reply_markup=InlineKeyboardMarkup(
-                    [
-                        [
-                            InlineKeyboardButton(
-                                "🔙 Orqaga", callback_data="start_messages"
-                            )
-                        ]
-                    ]
-                ),
-            )
-            return
-
-        elif data == "stop_messages":
-            if user_id in context.job_queue.jobs():
-                for job in context.job_queue.get_jobs_by_name(f"user_{user_id}"):
-                    job.schedule_removal()
-
-            await query.edit_message_text(
-                "✅ Xabar jo'natish to'xtatildi",
-                reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
-                ),
-            )
-            return
-
-        # Noma'lum buyruq uchun
+        # Noma'lum buyruq
         else:
             await query.edit_message_text(
                 "⚠️ Noma'lum buyruq",
@@ -2830,138 +2477,70 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     except Exception as e:
-        logger.error(f"Button handler error: {e}")
-    await query.edit_message_text(
-        "❌ Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.",
-        reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🏠 Bosh menyu", callback_data="back_to_start")]]
-        ),
-    )
-
-
-async def send_periodic_messages(context: ContextTypes.DEFAULT_TYPE):
-    """Xabarlarni guruhlarga jo'natish funksiyasi"""
-    try:
-        job = context.job
-        user_id = job.data["user_id"]
-
-        if user_id not in user_data or "message" not in user_data[user_id]:
-            return
-
-        message = user_data[user_id]["message"]
-        sent_count = 0
-
-        # 1. Avto-folder mavjud bo'lsa, uning guruhlariga yuborish
-        if user_id in auto_folders:
-            for chat_id in auto_folders[user_id]["groups"]:
-                try:
-                    await context.bot.send_message(chat_id=chat_id, text=message)
-                    sent_count += 1
-                    await asyncio.sleep(1)  # Flooddan saqlanish uchun
-                except Exception as e:
-                    logger.error(f"Xabar jo'natishda xato {chat_id}: {str(e)}")
-                    continue
-
-        # 2. Oddiy guruhlarga yuborish
-        elif user_id in user_groups:
-            for chat_id, group_info in user_groups[user_id].items():
-                try:
-                    await context.bot.send_message(chat_id=chat_id, text=message)
-                    sent_count += 1
-                    await asyncio.sleep(1)  # Flooddan saqlanish uchun
-                except Exception as e:
-                    logger.error(f"Xabar jo'natishda xato {chat_id}: {str(e)}")
-                    continue
-
-        # 3. Hisobot yuborish
-        if sent_count > 0:
-            await context.bot.send_message(
-                chat_id=user_id, text=f"✅ {sent_count} ta guruhga xabar jo'natildi!"
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text="❌ Hech qanday guruhga xabar yuborilmadi. Guruhlarni tekshiring.",
-            )
-
-    except Exception as e:
-        logger.error(f"Xabar jo'natishda xato: {str(e)}")
-
-
-async def create_auto_folder(query, user_id):
-    """Create auto folder for groups"""
-    if not user_groups.get(user_id):
-        keyboard = [
-            [InlineKeyboardButton("➕ Guruh qo'shish", callback_data="add_group")],
-            [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
-        ]
+        logger.error(f"Tugma boshqaruvchisida xatolik: {e}")
         await query.edit_message_text(
-            "❌ Avto-folder yaratish uchun avval guruh qo'shing",
-            reply_markup=InlineKeyboardMarkup(keyboard),
+            "❌ Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🏠 Bosh menyu", callback_data="back_to_start")]]
+            ),
         )
-        return
-
-    auto_folders[user_id] = {
-        "folder_name": "Auto-Folder",
-        "groups": list(user_groups[user_id].keys()),
-    }
-    save_data(AUTO_FOLDERS_FILE, auto_folders)
-
-    await query.edit_message_text(
-        "✅ Avto-folder muvaffaqiyatli yaratildi!\n\n"
-        "Bu folder ichidagi barcha guruhlarga xabarlarni bir vaqtda yuborishingiz mumkin.",
-        reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
-        ),
-    )
 
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(msg="Xato yuz berdi:", exc_info=context.error)
-    
+    logger.error(msg="Exception occurred:", exc_info=context.error)
+
     if update.callback_query:
         await update.callback_query.edit_message_text(
-            "❌ Tizim xatosi yuz berdi. Iltimos, keyinroq qayta urinib ko'ring.",
+            "❌ System error occurred. Please try again later.",
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 Bosh menyu", callback_data="back_to_start")]]
+                [[InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_start")]]
             ),
         )
     elif update.message:
         await update.message.reply_text(
-            "❌ Tizim xatosi yuz berdi. Iltimos, keyinroq qayta urinib ko'ring.",
+            "❌ System error occurred. Please try again later.",
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 Bosh menyu", callback_data="back_to_start")]]
+                [[InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_start")]]
             ),
         )
 
-# Applicationga error handlerni qo'shing
+
+async def set_bot_commands(application: Application):
+    """Bot komandalarini sozlash"""
+    commands = [
+        BotCommand("start", "Botni ishga tushurish"),
+        BotCommand("admin", "Admin paneli (adminlar uchun)"),
+        BotCommand("premium", "Premium holatini tekshirish"),
+        BotCommand("help", "Yordam olish"),
+    ]
+    await application.bot.set_my_commands(commands=commands)
+
 
 def main() -> None:
-    """Boshqaruv funksiyasi - botni ishga tushiradi."""
+    """Main function - starts the bot."""
     application = Application.builder().token(TOKEN).build()
 
     # Command handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin_panel))
+    application.add_handler(CommandHandler("testkey", generate_test_key))
+    application.add_handler(CommandHandler("premium", check_premium))
+    application.add_handler(CommandHandler("help", help_command))
 
     # Callback query handlers
     application.add_handler(CallbackQueryHandler(button_handler))
 
     # Message handlers
     application.add_handler(
-        MessageHandler(
-            filters.TEXT
-            & ~filters.COMMAND
-            & filters.Regex(r"^PREMIUM-[A-Z0-9]{8,12}$"),
-            process_key_activation,
-        )
-    )
-    application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     )
 
     # Error handler
     application.add_error_handler(error_handler)
+
+    # Set bot commands for menu
+    application.add_handler(CommandHandler("setcommands", set_bot_commands))
+    application.post_init = set_bot_commands
 
     # Run the bot
     application.run_polling(allowed_updates=Update.ALL_TYPES)
