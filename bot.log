@@ -1,0 +1,202 @@
+2025-04-23 19:11:47,749 - __main__ - ERROR - data\auto_folders.json yuklashda xato: Expecting value: line 1 column 1 (char 0)
+2025-04-23 19:11:49,645 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7683121684:AAEQT79KO1eGL4mKCkPYmmGyQxikIHu1r44/getMe "HTTP/1.1 200 OK"
+2025-04-23 19:11:49,953 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7683121684:AAEQT79KO1eGL4mKCkPYmmGyQxikIHu1r44/setMyCommands "HTTP/1.1 200 OK"
+2025-04-23 19:11:50,466 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7683121684:AAEQT79KO1eGL4mKCkPYmmGyQxikIHu1r44/deleteWebhook "HTTP/1.1 200 OK"
+2025-04-23 19:11:50,466 - apscheduler.scheduler - INFO - Scheduler started
+2025-04-23 19:11:50,466 - telegram.ext.Application - INFO - Application started
+2025-04-23 19:12:01,677 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7683121684:AAEQT79KO1eGL4mKCkPYmmGyQxikIHu1r44/getUpdates "HTTP/1.1 200 OK"
+2025-04-23 19:12:11,823 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7683121684:AAEQT79KO1eGL4mKCkPYmmGyQxikIHu1r44/getUpdates "HTTP/1.1 200 OK"
+2025-04-23 19:12:22,307 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7683121684:AAEQT79KO1eGL4mKCkPYmmGyQxikIHu1r44/getUpdates "HTTP/1.1 200 OK"
+2025-04-23 19:12:32,418 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7683121684:AAEQT79KO1eGL4mKCkPYmmGyQxikIHu1r44/getUpdates "HTTP/1.1 200 OK"
+2025-04-23 19:12:33,228 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7683121684:AAEQT79KO1eGL4mKCkPYmmGyQxikIHu1r44/getUpdates "HTTP/1.1 409 Conflict"
+2025-04-23 19:12:33,229 - __main__ - ERROR - Exception occurred:
+Traceback (most recent call last):
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\ext\_utils\networkloop.py", line 115, in network_retry_loop
+    if not await do_action():
+           ^^^^^^^^^^^^^^^^^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\ext\_utils\networkloop.py", line 108, in do_action
+    return action_cb_task.result()
+           ~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\ext\_updater.py", line 335, in polling_action_cb
+    updates = await self.bot.get_updates(
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\ext\_extbot.py", line 658, in get_updates
+    updates = await super().get_updates(
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\_bot.py", line 4593, in get_updates
+    await self._post(
+    ^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    ),
+    ^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\_bot.py", line 691, in _post
+    return await self._do_post(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\ext\_extbot.py", line 362, in _do_post
+    return await super()._do_post(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\_bot.py", line 720, in _do_post
+    result = await request.post(
+             ^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\request\_baserequest.py", line 197, in post
+    result = await self._request_wrapper(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\request\_baserequest.py", line 355, in _request_wrapper
+    raise Conflict(message)
+telegram.error.Conflict: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+2025-04-23 19:12:33,234 - telegram.ext.Application - ERROR - An error was raised and an uncaught error was raised while handling the error with an error_handler.
+Traceback (most recent call last):
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\ext\_application.py", line 1878, in process_error
+    await callback(update, context)
+  File "c:\Users\aslid\Dekstop\test-bot-2\main.py", line 2492, in error_handler
+    if update.callback_query:
+       ^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'callback_query'
+2025-04-23 19:12:36,904 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7683121684:AAEQT79KO1eGL4mKCkPYmmGyQxikIHu1r44/getUpdates "HTTP/1.1 200 OK"
+2025-04-23 19:12:37,528 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7683121684:AAEQT79KO1eGL4mKCkPYmmGyQxikIHu1r44/sendMessage "HTTP/1.1 200 OK"
+2025-04-23 19:12:38,441 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7683121684:AAEQT79KO1eGL4mKCkPYmmGyQxikIHu1r44/getUpdates "HTTP/1.1 409 Conflict"
+2025-04-23 19:12:38,441 - __main__ - ERROR - Exception occurred:
+Traceback (most recent call last):
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\ext\_utils\networkloop.py", line 115, in network_retry_loop
+    if not await do_action():
+           ^^^^^^^^^^^^^^^^^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\ext\_utils\networkloop.py", line 108, in do_action
+    return action_cb_task.result()
+           ~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\ext\_updater.py", line 335, in polling_action_cb
+    updates = await self.bot.get_updates(
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\ext\_extbot.py", line 658, in get_updates
+    updates = await super().get_updates(
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\_bot.py", line 4593, in get_updates
+    await self._post(
+    ^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    ),
+    ^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\_bot.py", line 691, in _post
+    return await self._do_post(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\ext\_extbot.py", line 362, in _do_post
+    return await super()._do_post(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\_bot.py", line 720, in _do_post
+    result = await request.post(
+             ^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\request\_baserequest.py", line 197, in post
+    result = await self._request_wrapper(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\request\_baserequest.py", line 355, in _request_wrapper
+    raise Conflict(message)
+telegram.error.Conflict: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+2025-04-23 19:12:38,443 - telegram.ext.Application - ERROR - An error was raised and an uncaught error was raised while handling the error with an error_handler.
+Traceback (most recent call last):
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\ext\_application.py", line 1878, in process_error
+    await callback(update, context)
+  File "c:\Users\aslid\Dekstop\test-bot-2\main.py", line 2492, in error_handler
+    if update.callback_query:
+       ^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'callback_query'
+2025-04-23 19:12:40,334 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7683121684:AAEQT79KO1eGL4mKCkPYmmGyQxikIHu1r44/getUpdates "HTTP/1.1 200 OK"
+2025-04-23 19:12:40,693 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7683121684:AAEQT79KO1eGL4mKCkPYmmGyQxikIHu1r44/answerCallbackQuery "HTTP/1.1 200 OK"
+2025-04-23 19:12:41,118 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7683121684:AAEQT79KO1eGL4mKCkPYmmGyQxikIHu1r44/sendMessage "HTTP/1.1 200 OK"
+2025-04-23 19:12:41,322 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7683121684:AAEQT79KO1eGL4mKCkPYmmGyQxikIHu1r44/editMessageText "HTTP/1.1 200 OK"
+2025-04-23 19:12:44,381 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7683121684:AAEQT79KO1eGL4mKCkPYmmGyQxikIHu1r44/getUpdates "HTTP/1.1 409 Conflict"
+2025-04-23 19:12:44,382 - __main__ - ERROR - Exception occurred:
+Traceback (most recent call last):
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\ext\_utils\networkloop.py", line 115, in network_retry_loop
+    if not await do_action():
+           ^^^^^^^^^^^^^^^^^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\ext\_utils\networkloop.py", line 108, in do_action
+    return action_cb_task.result()
+           ~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\ext\_updater.py", line 335, in polling_action_cb
+    updates = await self.bot.get_updates(
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\ext\_extbot.py", line 658, in get_updates
+    updates = await super().get_updates(
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\_bot.py", line 4593, in get_updates
+    await self._post(
+    ^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    ),
+    ^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\_bot.py", line 691, in _post
+    return await self._do_post(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\ext\_extbot.py", line 362, in _do_post
+    return await super()._do_post(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\_bot.py", line 720, in _do_post
+    result = await request.post(
+             ^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\request\_baserequest.py", line 197, in post
+    result = await self._request_wrapper(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\request\_baserequest.py", line 355, in _request_wrapper
+    raise Conflict(message)
+telegram.error.Conflict: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+2025-04-23 19:12:44,383 - telegram.ext.Application - ERROR - An error was raised and an uncaught error was raised while handling the error with an error_handler.
+Traceback (most recent call last):
+  File "C:\Users\aslid\AppData\Local\Programs\Python\Python313\Lib\site-packages\telegram\ext\_application.py", line 1878, in process_error
+    await callback(update, context)
+  File "c:\Users\aslid\Dekstop\test-bot-2\main.py", line 2492, in error_handler
+    if update.callback_query:
+       ^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'callback_query'
