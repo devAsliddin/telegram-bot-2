@@ -4,3 +4,4 @@ telethon
 apscheduler
 pyrogram
 tgcrypto
+pytz
