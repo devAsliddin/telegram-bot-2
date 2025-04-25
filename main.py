@@ -1352,7 +1352,7 @@ async def process_verification_code(update, context, user_id, text):
         clean_code = re.sub(r"[^0-9]", "", text)
 
         # Kod uzunligini tekshirish
-        if len(clean_code) < 5:
+        if len(clean_code) != 5:
             await update.message.reply_text(
                 "❌ Kod 5 raqamdan iborat bo'lishi kerak! Iltimos, qayta kiriting.",
                 reply_markup=InlineKeyboardMarkup(
@@ -1372,13 +1372,13 @@ async def process_verification_code(update, context, user_id, text):
             )
             return
 
-        # Foydalanuvchi ma'lumotlarini tekshirish
+        # Client mavjudligini tekshirish
         if (
             user_id not in telegram_accounts
-            or "phone_code_hash" not in telegram_accounts[user_id]
+            or "client" not in telegram_accounts[user_id]
         ):
             await update.message.reply_text(
-                "❌ Avval telefon raqamingizni kiriting!",
+                "❌ Ulanishda xato. Iltimos, qaytadan urinib ko'ring.",
                 reply_markup=InlineKeyboardMarkup(
                     [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
                 ),
@@ -1449,15 +1449,16 @@ async def process_verification_code(update, context, user_id, text):
             )
 
         except Exception as e:
+            logger.error(f"Kodni tekshirishda xato: {str(e)}", exc_info=True)
             await update.message.reply_text(
-                f"❌ Xatolik yuz berdi: {str(e)}",
+                f"❌ Xatolik yuz berdi: {str(e)}\nIltimos, qayta urinib ko'ring.",
                 reply_markup=InlineKeyboardMarkup(
                     [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
                 ),
             )
 
     except Exception as e:
-        logger.error(f"Tasdiqlash kodini qayta ishlashda xato: {str(e)}")
+        logger.error(f"Tasdiqlash kodini qayta ishlashda xato: {str(e)}", exc_info=True)
         await update.message.reply_text(
             "❌ Tizim xatosi. Iltimos, keyinroq qayta urinib ko'ring.",
             reply_markup=InlineKeyboardMarkup(
@@ -1702,8 +1703,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if state == "waiting_phone_number":
             await process_phone_number(update, context, user_id, text)
 
-        elif state == "waiting_verification_code":
+        if state == "waiting_verification_code":
             await process_verification_code(update, context, user_id, text)
+            return
 
         elif state == "waiting_password":
             await process_2fa_password(update, context, user_id, text)
