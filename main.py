@@ -1272,11 +1272,11 @@ def is_valid_code_format(code: str) -> bool:
 #         )
 
 
-async def process_phone_number(update, context, user_id, phone_number):
+async def process_phone_number(update, context, user_id, text):
     """Telefon raqamini qayta ishlash va tasdiqlash kodini yuborish"""
     try:
         # Telefon raqamini tekshirish
-        if not re.match(r"^\+[0-9]{10,14}$", phone_number):
+        if not re.match(r"^\+[0-9]{10,14}$", text):
             await update.message.reply_text(
                 "❌ Noto'g'ri telefon raqami formati! Iltimos, +998901234567 formatida kiriting."
             )
@@ -1289,195 +1289,70 @@ async def process_phone_number(update, context, user_id, phone_number):
             api_hash=API_HASH,
             in_memory=True,
         )
-
         await client.connect()
 
-        try:
-            # Telefon raqamiga kod yuborish
-            sent_code = await client.send_code(phone_number)
+        # Telefon raqamiga kod yuborish
+        sent_code = await client.send_code(text)
 
-            # Ma'lumotlarni saqlash
-            telegram_accounts[user_id] = {
-                "phone": phone_number,
-                "client": client,
-                "phone_code_hash": sent_code.phone_code_hash,
-            }
-            save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
+        # Ma'lumotlarni saqlash
+        telegram_accounts[user_id] = {
+            "phone": text,
+            "client": client,
+            "phone_code_hash": sent_code.phone_code_hash,
+        }
+        save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
 
-            await update.message.reply_text(
-                "✅ Tasdiqlash kodi yuborildi! Iltimos, Telegramdan kelgan 5 xonali kodni kiriting.\n\n"
-                "Kodni quyidagi formatda kiriting: <code>12345</code> yoki <code>12 345</code>",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(
+        user_data[user_id] = {"state": "waiting_verification_code"}
+
+        await update.message.reply_text(
+            "✅ Tasdiqlash kodi yuborildi! Iltimos, Telegramdan kelgan 5 xonali kodni kiriting:\n\n"
+            "Kodni quyidagi formatda kiriting: <code>12345</code> yoki <code>12 345</code>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(
+                [
                     [
-                        [
-                            InlineKeyboardButton(
-                                "🔄 Kodni qayta yuborish", callback_data="resend_code"
-                            )
-                        ],
-                        [
-                            InlineKeyboardButton(
-                                "🔙 Orqaga", callback_data="back_to_start"
-                            )
-                        ],
-                    ]
-                ),
-            )
+                        InlineKeyboardButton(
+                            "🔄 Kodni qayta yuborish", callback_data="resend_code"
+                        )
+                    ],
+                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
+                ]
+            ),
+        )
 
-        except FloodWait as e:
-            wait_time = e.value
-            await update.message.reply_text(
-                f"❌ Juda ko'p urinishlar! Iltimos, {wait_time} soniya kutib turing.",
-                reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
-                ),
-            )
-            await client.disconnect()
-
-        except PhoneNumberInvalid:
-            await update.message.reply_text(
-                "❌ Noto'g'ri telefon raqami! Iltimos, to'g'ri raqam kiriting.",
-                reply_markup=InlineKeyboardMarkup(
-                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
-                ),
-            )
-            await client.disconnect()
-
+    except FloodWait as e:
+        wait_time = e.value
+        await update.message.reply_text(
+            f"❌ Juda ko'p urinishlar! Iltimos, {wait_time} soniya kutib turing.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
+            ),
+        )
+    except PhoneNumberInvalid:
+        await update.message.reply_text(
+            "❌ Noto'g'ri telefon raqami! Iltimos, to'g'ri raqam kiriting.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
+            ),
+        )
     except Exception as e:
         logger.error(f"Telefon raqamini qayta ishlashda xato: {str(e)}", exc_info=True)
         await update.message.reply_text(
             f"❌ Tizim xatosi. Xato tafsilotlari: {str(e)}",
-            reply_markup=InlineKeyboardMarkup(
-                [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
-            ),
-        )
-
-
-async def process_verification_code(update, context, user_id, code):
-    """Tasdiqlash kodini qayta ishlash"""
-    try:
-        # Faqat raqamlarni olib tashlash
-        clean_code = re.sub(r"[^0-9]", "", code)
-
-        # Kod uzunligini tekshirish
-        if len(clean_code) != 5:
-            await update.message.reply_text(
-                "❌ Kod 5 raqamdan iborat bo'lishi kerak! Iltimos, qayta kiriting.",
-                reply_markup=InlineKeyboardMarkup(
-                    [
-                        [
-                            InlineKeyboardButton(
-                                "🔄 Qayta yuborish", callback_data="resend_code"
-                            )
-                        ],
-                        [
-                            InlineKeyboardButton(
-                                "🔙 Orqaga", callback_data="back_to_start"
-                            )
-                        ],
-                    ]
-                ),
-            )
-            return
-
-        # Foydalanuvchi ma'lumotlarini tekshirish
-        if (
-            user_id not in telegram_accounts
-            or "phone_code_hash" not in telegram_accounts[user_id]
-        ):
-            await update.message.reply_text(
-                "❌ Avval telefon raqamingizni kiriting!",
-                reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
-                ),
-            )
-            return
-
-        client = telegram_accounts[user_id]["client"]
-        phone = telegram_accounts[user_id]["phone"]
-        phone_code_hash = telegram_accounts[user_id]["phone_code_hash"]
-
-        try:
-            # Kod bilan kirish
-            await client.sign_in(
-                phone_number=phone,
-                phone_code_hash=phone_code_hash,
-                phone_code=clean_code,
-            )
-
-            # Muvaffaqiyatli ulanish
-            session_string = await client.export_session_string()
-            telegram_accounts[user_id]["session"] = session_string
-            telegram_accounts[user_id]["connected_at"] = datetime.now()
-            save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
-
-            await update.message.reply_text(
-                "✅ Muvaffaqiyatli ulandi! Endi siz botning barcha funksiyalaridan foydalanishingiz mumkin.",
-                reply_markup=InlineKeyboardMarkup(
-                    [
-                        InlineKeyboardButton(
-                            "🏠 Bosh menyu", callback_data="back_to_start"
-                        )
-                    ]
-                ),
-            )
-
-        except SessionPasswordNeeded:
-            telegram_accounts[user_id]["state"] = "waiting_password"
-            await update.message.reply_text(
-                "🔒 Hisobingizda 2-qadam autentifikatsiya yoqilgan. Iltimos, parolingizni kiriting:",
-                reply_markup=InlineKeyboardMarkup(
-                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
-                ),
-            )
-
-        except PhoneCodeInvalid:
-            await update.message.reply_text(
-                "❌ Noto'g'ri tasdiqlash kodi! Iltimos, yangi kod so'rang va qayta urinib ko'ring.",
-                reply_markup=InlineKeyboardMarkup(
-                    [
-                        InlineKeyboardButton(
-                            "🔄 Yangi kod so'rash", callback_data="resend_code"
-                        )
-                    ],
-                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
-                ),
-            )
-
-        except Exception as e:
-            await update.message.reply_text(
-                f"❌ Xatolik yuz berdi: {str(e)}",
-                reply_markup=InlineKeyboardMarkup(
-                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
-                ),
-            )
-
-    except Exception as e:
-        logger.error(f"Tasdiqlash kodini qayta ishlashda xato: {str(e)}")
-        await update.message.reply_text(
-            "❌ Tizim xatosi. Iltimos, keyinroq qayta urinib ko'r ing.",
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
             ),
         )
 
 
-def format_code(raw_code: str) -> str:
-    """Foydalanuvchi kiritgan kodni standart formatga keltiradi"""
-    clean_code = re.sub(r"[^0-9]", "", raw_code)
-    if len(clean_code) <= 3:
-        return clean_code
-    return f"{clean_code[:-3]}_{clean_code[-3:]}"
-
-
-async def process_verification_code(update, context, user_id, code):
+async def process_verification_code(update, context, user_id, text):
     """Tasdiqlash kodini qayta ishlash"""
     try:
         # Faqat raqamlarni olib tashlash
-        clean_code = re.sub(r"[^0-9]", "", code)
+        clean_code = re.sub(r"[^0-9]", "", text)
 
         # Kod uzunligini tekshirish
-        if len(clean_code) != 5:
+        if len(clean_code) < 5:
             await update.message.reply_text(
                 "❌ Kod 5 raqamdan iborat bo'lishi kerak! Iltimos, qayta kiriting.",
                 reply_markup=InlineKeyboardMarkup(
@@ -1528,23 +1403,29 @@ async def process_verification_code(update, context, user_id, code):
             telegram_accounts[user_id]["connected_at"] = datetime.now()
             save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
 
+            # Tozalash
+            if user_id in user_data:
+                del user_data[user_id]
+
             await update.message.reply_text(
                 "✅ Muvaffaqiyatli ulandi! Endi siz botning barcha funksiyalaridan foydalanishingiz mumkin.",
                 reply_markup=InlineKeyboardMarkup(
                     [
-                        InlineKeyboardButton(
-                            "🏠 Bosh menyu", callback_data="back_to_start"
-                        )
+                        [
+                            InlineKeyboardButton(
+                                "🏠 Bosh menyu", callback_data="back_to_start"
+                            )
+                        ]
                     ]
                 ),
             )
 
         except SessionPasswordNeeded:
-            telegram_accounts[user_id]["state"] = "waiting_password"
+            user_data[user_id] = {"state": "waiting_password"}
             await update.message.reply_text(
                 "🔒 Hisobingizda 2-qadam autentifikatsiya yoqilgan. Iltimos, parolingizni kiriting:",
                 reply_markup=InlineKeyboardMarkup(
-                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
+                    [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
                 ),
             )
 
@@ -1553,11 +1434,17 @@ async def process_verification_code(update, context, user_id, code):
                 "❌ Noto'g'ri tasdiqlash kodi! Iltimos, yangi kod so'rang va qayta urinib ko'ring.",
                 reply_markup=InlineKeyboardMarkup(
                     [
-                        InlineKeyboardButton(
-                            "🔄 Yangi kod so'rash", callback_data="resend_code"
-                        )
-                    ],
-                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
+                        [
+                            InlineKeyboardButton(
+                                "🔄 Yangi kod so'rash", callback_data="resend_code"
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "🔙 Orqaga", callback_data="back_to_start"
+                            )
+                        ],
+                    ]
                 ),
             )
 
@@ -1565,7 +1452,7 @@ async def process_verification_code(update, context, user_id, code):
             await update.message.reply_text(
                 f"❌ Xatolik yuz berdi: {str(e)}",
                 reply_markup=InlineKeyboardMarkup(
-                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
+                    [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
                 ),
             )
 
@@ -1574,7 +1461,7 @@ async def process_verification_code(update, context, user_id, code):
         await update.message.reply_text(
             "❌ Tizim xatosi. Iltimos, keyinroq qayta urinib ko'ring.",
             reply_markup=InlineKeyboardMarkup(
-                [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
+                [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
             ),
         )
 
@@ -1762,10 +1649,16 @@ async def show_telegram_account_info(query, user_id):
 
         await query.edit_message_text(
             message,
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ Uzish", callback_data="disconnect_account")],
-                [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
-            ])
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "❌ Uzish", callback_data="disconnect_account"
+                        )
+                    ],
+                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
+                ]
+            ),
         )
     except Exception as e:
         logger.error(f"Hisob ma'lumoti xatosi: {str(e)}")
@@ -1806,105 +1699,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="HTML",
             )
 
-        elif state == "waiting_phone_number":
-            if not re.match(r"^\+[0-9]{10,14}$", text):
-                await update.message.reply_text("❌ Invalid phone number format!")
-                return
-
-            telegram_accounts[user_id]["phone"] = text
-            save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
-
-            client = PyrogramClient(
-                name=f"user_{user_id}",
-                api_id=telegram_accounts[user_id]["api_id"],
-                api_hash=telegram_accounts[user_id]["api_hash"],
-                in_memory=True,
-            )
-            await client.connect()
-
-            sent_code = await client.send_code(text)
-            user_data[user_id] = {
-                "state": "waiting_verification_code",
-                "client": client,
-                "phone_code_hash": sent_code.phone_code_hash,
-            }
-
-            await update.message.reply_text(
-                "✅ Verfikatsiya kodi yuborildi!\n\n"
-                "Telegramdan kelgan 5 xonali raqamni kirgizing. 12345 qilib emas 12_345 qilib kiriting\n\n"
-                "agar kod kelmagan bo'lsa qayta yuborish tugmasini bosing:",
-                reply_markup=InlineKeyboardMarkup(
-                    [
-                        [
-                            InlineKeyboardButton(
-                                "🔄 Qayta yuborish", callback_data="resend_code"
-                            )
-                        ],
-                        [
-                            InlineKeyboardButton(
-                                "🔙 Qaytish", callback_data="back_to_start"
-                            )
-                        ],
-                    ]
-                ),
-            )
+        if state == "waiting_phone_number":
+            await process_phone_number(update, context, user_id, text)
 
         elif state == "waiting_verification_code":
-            client = user_data[user_id]["client"]
-            try:
-                await client.sign_in(
-                    phone_number=telegram_accounts[user_id]["phone"],
-                    phone_code_hash=user_data[user_id]["phone_code_hash"],
-                    phone_code=text,
-                )
-
-                session_string = await client.export_session_string()
-                telegram_accounts[user_id]["session"] = session_string
-                save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
-
-                await update.message.reply_text(
-                    "✅ Telegram account connected!",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🏠 Main Menu", callback_data="back_to_start"
-                                )
-                            ]
-                        ]
-                    ),
-                )
-
-            except SessionPasswordNeeded:
-                user_data[user_id]["state"] = "waiting_password"
-                await update.message.reply_text("🔒 Please enter your 2FA password:")
-
-            except Exception as e:
-                await update.message.reply_text(f"❌ Error: {str(e)}")
+            await process_verification_code(update, context, user_id, text)
 
         elif state == "waiting_password":
-            client = user_data[user_id]["client"]
-            try:
-                await client.check_password(password=text)
-                session_string = await client.export_session_string()
-                telegram_accounts[user_id]["session"] = session_string
-                save_data(TELEGRAM_ACCOUNTS_FILE, telegram_accounts)
-
-                await update.message.reply_text(
-                    "✅ Successfully connected!",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "🏠 Main Menu", callback_data="back_to_start"
-                                )
-                            ]
-                        ]
-                    ),
-                )
-            except Exception as e:
-                await update.message.reply_text(f"❌ Error: {str(e)}")
-
+            await process_2fa_password(update, context, user_id, text)
         elif state == "waiting_group_link":
             await process_group_link(update, context, user_id, text)
 
