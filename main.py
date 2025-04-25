@@ -673,13 +673,12 @@ async def list_user_groups(query, user_id):
     message = "📋 Sizning guruhlaringiz:\n\n"
     for idx, (group_id, group) in enumerate(user_groups[user_id].items(), 1):
         username = group.get("username", "noma'lum")
-        message += f"{idx}. @{username}\n👉 {group['link']}\n\n"
-
+        link = group.get("link", "")
+        message += f"{idx}. @{username}\n👉 {link}\n\n"
     keyboard = [
         [InlineKeyboardButton("➕ Guruh qo'shish", callback_data="add_group")],
         [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
     ]
-
     await query.edit_message_text(
         message,
         reply_markup=InlineKeyboardMarkup(keyboard),
@@ -1748,25 +1747,25 @@ async def show_telegram_account_info(query, user_id):
             )
             return
 
-        account = telegram_accounts[user_id]
+        account = telegram_accounts.get(user_id, {})
         connected_at = account.get("connected_at", datetime.now())
         if isinstance(connected_at, str):
             connected_at = datetime.fromisoformat(connected_at)
 
-        keyboard = [
-            [InlineKeyboardButton("❌ Uzish", callback_data="disconnect_account")],
-            [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
-        ]
-
+        phone = account.get("phone", "Noma'lum")
         message = "📲 Ulangan Telegram Hisobi:\n\n"
-        message += f"📞 Telefon: {account.get('phone', 'Noma\'lum')}\n"
+        message += f"📞 Telefon: {phone}\n"
         message += f"🕒 Ulangan vaqt: {connected_at.strftime('%Y-%m-%d %H:%M')}\n"
 
         if account.get("api_id"):
             message += "\n✅ API ma'lumotlari mavjud\n"
 
         await query.edit_message_text(
-            message, reply_markup=InlineKeyboardMarkup(keyboard)
+            message,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Uzish", callback_data="disconnect_account")],
+                [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
+            ])
         )
     except Exception as e:
         logger.error(f"Hisob ma'lumoti xatosi: {str(e)}")
