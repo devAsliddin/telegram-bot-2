@@ -27,6 +27,9 @@ import pytz
 import json
 from pathlib import Path
 from telegram.constants import ParseMode
+from flask import Flask
+
+app = Flask(__name__)
 
 # Loglarni sozlash
 logging.basicConfig(
@@ -2349,6 +2352,8 @@ def main() -> None:
 
     # Run the bot
     application.run_polling(allowed_updates=Update.ALL_TYPES)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
 
 
 if __name__ == "__main__":
