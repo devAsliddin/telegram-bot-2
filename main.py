@@ -1309,7 +1309,7 @@ async def process_phone_number(update, context, user_id, text):
 
         await update.message.reply_text(
             "✅ Tasdiqlash kodi yuborildi! Iltimos, Telegramdan kelgan 5 xonali kodni kiriting:\n\n"
-            "Kodni quyidagi formatda kiriting: <code>12345</code> yoki <code>12 345</code>",
+            "Kodni quyidagi formatda kiriting: <code>12-345</code> yoki <code>12_345</code>",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(
                 [
@@ -2355,4 +2355,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # Run Flask app if needed
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
+    # Also run the Telegram bot
     main()
