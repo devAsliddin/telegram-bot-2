@@ -27,6 +27,7 @@ import pytz
 import json
 from pathlib import Path
 from telegram.constants import ParseMode
+from telegram.ext import Application
 
 # Loglarni sozlash
 logging.basicConfig(
@@ -1300,7 +1301,7 @@ async def process_phone_number(update, context, user_id, phone_number):
 
 
 def clean_phone_number(phone_number: str) -> str:
-    
+
     cleaned = re.sub(r"[^0-9]", "", phone_number)
 
     if len(cleaned) == 12 and cleaned.startswith("998"):
@@ -2484,20 +2485,16 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(button_handler))
 
     # Message handlers
-    application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
-    )
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # Error handler
     application.add_error_handler(error_handler)
 
     # Set bot commands for menu
-    application.add_handler(CommandHandler("setcommands", set_bot_commands))
     application.post_init = set_bot_commands
 
     # Run the bot
     application.run_polling(allowed_updates=Update.ALL_TYPES)
-
 
 if __name__ == "__main__":
     main()
