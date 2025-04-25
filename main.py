@@ -27,9 +27,6 @@ import pytz
 import json
 from pathlib import Path
 from telegram.constants import ParseMode
-from flask import Flask
-
-app = Flask(__name__)
 
 # Loglarni sozlash
 logging.basicConfig(
@@ -2355,8 +2352,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    # Run Flask app if needed
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
 
     # Also run the Telegram bot
     main()

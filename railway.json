@@ -1,0 +1,11 @@
+{
+  "builds": [
+    {
+      "src": ".",
+      "use": "@railway/python"
+    }
+  ],
+  "deploy": {
+    "startCommand": "gunicorn main:app & python bot.py"
+  }
+}
