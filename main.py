@@ -672,9 +672,8 @@ async def list_user_groups(query, user_id):
 
     message = "📋 Sizning guruhlaringiz:\n\n"
     for idx, (group_id, group) in enumerate(user_groups[user_id].items(), 1):
-        message += (
-            f"{idx}. @{group.get('username', 'noma\'lum')}\n👉 {group['link']}\n\n"
-        )
+        username = group.get("username", "noma'lum")
+        message += f"{idx}. @{username}\n👉 {group['link']}\n\n"
 
     keyboard = [
         [InlineKeyboardButton("➕ Guruh qo'shish", callback_data="add_group")],
@@ -1273,6 +1272,7 @@ def is_valid_code_format(code: str) -> bool:
 #             ),
 #         )
 
+
 async def process_phone_number(update, context, user_id, phone_number):
     """Telefon raqamini qayta ishlash va tasdiqlash kodini yuborish"""
     try:
@@ -1352,6 +1352,7 @@ async def process_phone_number(update, context, user_id, phone_number):
                 [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]
             ),
         )
+
 
 async def process_verification_code(update, context, user_id, code):
     """Tasdiqlash kodini qayta ishlash"""
@@ -1460,6 +1461,7 @@ async def process_verification_code(update, context, user_id, code):
                 [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
             ),
         )
+
 
 def format_code(raw_code: str) -> str:
     """Foydalanuvchi kiritgan kodni standart formatga keltiradi"""
