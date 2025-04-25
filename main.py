@@ -1198,6 +1198,14 @@ def is_valid_code_format(code: str) -> bool:
     return len(clean_code) in (5, 6, 7)
 
 
+def format_code(raw_code: str) -> str:
+    """Foydalanuvchi kiritgan kodni standart formatga keltiradi"""
+    clean_code = re.sub(r"[^0-9]", "", raw_code)
+    if len(clean_code) <= 3:
+        return clean_code
+    return f"{clean_code[:-3]}_{clean_code[-3:]}"
+
+
 async def process_phone_number(update, context, user_id, phone_number):
     """Telefon raqamini qayta ishlash (soddalashtirilgan versiya)"""
     try:
@@ -1328,16 +1336,19 @@ def validate_phone_number(phone_number: str) -> bool:
     )
 
 
-async def process_verification_code(update, context, user_id, code):
+async def process_verification_code(update, context, user_id, text):
     """Tasdiqlash kodini qayta ishlash"""
     try:
-        # Faqat raqamlarni olib tashlash
-        clean_code = re.sub(r"[^0-9]", "", code)
+        # Kodni formatlash (12_345 ko'rinishiga keltirish)
+        formatted_code = format_code(text)
 
-        # Kod uzunligini tekshirish
-        if len(clean_code) != 5:
+        # Kod formati tekshiruvi
+        if not is_valid_code_format(formatted_code):
             await update.message.reply_text(
-                "❌ Kod 5 raqamdan iborat bo'lishi kerak! Iltimos, qayta kiriting.",
+                "❌ Noto'g'ri kod formati! Kod quyidagi ko'rinishda bo'lishi kerak:\n"
+                "✅ To'g'ri format: <code>12_345</code> yoki <code>12345</code>\n\n"
+                "Iltimos, qayta kiriting:",
+                parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(
                     [
                         [
@@ -1354,6 +1365,9 @@ async def process_verification_code(update, context, user_id, code):
                 ),
             )
             return
+
+        # Faqat raqamlarni olib tashlash
+        clean_code = re.sub(r"[^0-9]", "", formatted_code)
 
         # Foydalanuvchi ma'lumotlarini tekshirish
         if (
@@ -1411,11 +1425,17 @@ async def process_verification_code(update, context, user_id, code):
                 "❌ Noto'g'ri tasdiqlash kodi! Iltimos, yangi kod so'rang va qayta urinib ko'ring.",
                 reply_markup=InlineKeyboardMarkup(
                     [
-                        InlineKeyboardButton(
-                            "🔄 Yangi kod so'rash", callback_data="resend_code"
-                        )
-                    ],
-                    [InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")],
+                        [
+                            InlineKeyboardButton(
+                                "🔄 Yangi kod so'rash", callback_data="resend_code"
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "🔙 Orqaga", callback_data="back_to_start"
+                            )
+                        ],
+                    ]
                 ),
             )
 
@@ -1430,7 +1450,7 @@ async def process_verification_code(update, context, user_id, code):
     except Exception as e:
         logger.error(f"Tasdiqlash kodini qayta ishlashda xato: {str(e)}")
         await update.message.reply_text(
-            "❌ Tizim xatosi. Iltimos, keyinroq qayta urinib ko'r ing.",
+            "❌ Tizim xatosi. Iltimos, keyinroq qayta urinib ko'ring.",
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_start")]]
             ),
@@ -2485,7 +2505,9 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(button_handler))
 
     # Message handlers
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+    )
 
     # Error handler
     application.add_error_handler(error_handler)
@@ -2495,6 +2517,7 @@ def main() -> None:
 
     # Run the bot
     application.run_polling(allowed_updates=Update.ALL_TYPES)
+
 
 if __name__ == "__main__":
     main()
