@@ -6,6 +6,6 @@
     }
   ],
   "deploy": {
-    "startCommand": "gunicorn main:app & python bot.py"
+    "startCommand": "gunicorn main:app & python main.py"
   }
 }
